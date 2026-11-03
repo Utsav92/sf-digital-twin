@@ -27,7 +27,7 @@ def stale(t) -> bool:
     newest = max((p.stat().st_mtime for p in (ROOT / "data/processed/tiles" / t["id"]).glob("mesh_*.npz")),
                  default=0)
     srcs = [ROOT / "src/blender" / f for f in ("build_tile.py", "materials.py", "bpy_common.py",
-                                                  "trees_instancing.py")]
+                                                  "trees_instancing.py", "props_instancing.py")]
     newest = max([newest] + [p.stat().st_mtime for p in srcs if p.exists()])
     return b.stat().st_mtime < newest
 

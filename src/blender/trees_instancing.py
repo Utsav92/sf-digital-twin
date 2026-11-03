@@ -58,6 +58,54 @@ def _cone(r, z0, z1, seg=7):
     return f
 
 
+def _lobes(n_lobes, zc, sz, seed, detail=2):
+    """Organic crown: several jittered, noise-displaced icosphere lobes, smooth shaded."""
+    from mathutils import Vector, noise
+    import random
+
+    def f(bm):
+        rnd = random.Random(seed)
+        for k in range(n_lobes):
+            r = 0.55 + 0.35 * rnd.random()
+            c = Vector((rnd.uniform(-0.45, 0.45), rnd.uniform(-0.45, 0.45), zc + rnd.uniform(-0.12, 0.12)))
+            res = bmesh.ops.create_icosphere(bm, subdivisions=detail, radius=r)
+            for v in res["verts"]:
+                d = 1.0 + 0.28 * noise.noise(v.co * 2.3 + Vector((seed, k, 0)))
+                v.co = Vector((v.co.x * d + c.x, v.co.y * d + c.y, v.co.z * d * sz + c.z))
+            for fc in {fc for v in res["verts"] for fc in v.link_faces}:
+                fc.smooth = True
+    return f
+
+
+def _tiers(seed):
+    from mathutils import Vector, noise
+
+    def f(bm):
+        for k, (z0, z1, r) in enumerate(((0.15, 0.55, 0.95), (0.40, 0.80, 0.72), (0.62, 1.0, 0.45))):
+            res = bmesh.ops.create_cone(bm, cap_ends=True, segments=10, radius1=r, radius2=0.05, depth=z1 - z0)
+            for v in res["verts"]:
+                d = 1.0 + 0.18 * noise.noise(v.co * 4 + Vector((seed, k, 1)))
+                v.co = Vector((v.co.x * d, v.co.y * d, v.co.z + (z0 + z1) / 2))
+            for fc in {fc for v in res["verts"] for fc in v.link_faces}:
+                fc.smooth = True
+    return f
+
+
+def _fronds(bm):
+    import math as m
+    for k in range(9):
+        a = 2 * m.pi * k / 9
+        ca, sa = m.cos(a), m.sin(a)
+        pts = [(0.0, 0.92), (0.45, 0.97), (0.85, 0.88), (1.05, 0.72)]
+        vs = []
+        for (r, z) in pts:
+            vs.append((bm.verts.new((ca * r - sa * 0.09, sa * r + ca * 0.09, z)),
+                       bm.verts.new((ca * r + sa * 0.09, sa * r - ca * 0.09, z))))
+        for (a0, b0), (a1, b1) in zip(vs[:-1], vs[1:]):
+            fc = bm.faces.new((a0, b0, b1, a1))
+            fc.smooth = True
+
+
 def protos(lod):
     name = f"tree_protos_{lod}"
     coll = bpy.data.collections.get(name)
@@ -68,12 +116,17 @@ def protos(lod):
     coll.hide_render = True  # never rendered directly; referenced by the instancer
     lo = lod == "lod0"
     # unit trees: height 1.0, crown radius 1.0 in XY (scaled per point by (r, r, h))
-    _proto(f"0_broadleaf_{lod}", [(_cyl(0.06, 0, 0.45), "tree_trunk"),
-                                  (_ico(1.0, 0.68, 0.35, 0 if lo else 1), "tree_crown")], coll)
-    _proto(f"1_conifer_{lod}", [(_cyl(0.05, 0, 0.25), "tree_trunk"),
-                                (_cone(0.9, 0.15, 1.0, 5 if lo else 8), "tree_conifer")], coll)
-    _proto(f"2_palm_{lod}", [(_cyl(0.04, 0, 0.9), "tree_trunk"),
-                             (_ico(1.0, 0.93, 0.18, 0), "tree_palm")], coll)
+    if lo:  # far LOD: cheap silhouettes
+        _proto(f"0_broadleaf_{lod}", [(_cyl(0.06, 0, 0.45), "tree_trunk"),
+                                      (_ico(1.0, 0.68, 0.35, 0), "tree_crown")], coll)
+        _proto(f"1_conifer_{lod}", [(_cyl(0.05, 0, 0.25), "tree_trunk"),
+                                    (_cone(0.9, 0.15, 1.0, 5), "tree_conifer")], coll)
+        _proto(f"2_palm_{lod}", [(_cyl(0.04, 0, 0.9), "tree_trunk"), (_ico(1.0, 0.93, 0.18, 0), "tree_palm")], coll)
+    else:   # near LOD: organic lobed crowns, tiered conifers, frond palms
+        _proto(f"0_broadleaf_{lod}", [(_cyl(0.05, 0, 0.5, 7), "tree_trunk"),
+                                      (_lobes(5, 0.68, 0.55, 3), "tree_crown")], coll)
+        _proto(f"1_conifer_{lod}", [(_cyl(0.05, 0, 0.3, 7), "tree_trunk"), (_tiers(5), "tree_conifer")], coll)
+        _proto(f"2_palm_{lod}", [(_cyl(0.035, 0, 0.92, 7), "tree_trunk"), (_fronds, "tree_palm")], coll)
     # palms: scale crown radius smaller relative to height is handled by data (crown_r)
     return coll
 

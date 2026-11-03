@@ -45,16 +45,21 @@ def solar_position(when: dt.datetime, lat=SF_LAT, lon=SF_LON) -> tuple[float, fl
     return 90 - math.degrees(zen), az
 
 
-def setup_sun_sky(scn, when: str = "2026-09-21T16:00", tz_hours: float = -7, strength: float = 1.0):
+def setup_sun_sky(scn, when: str = "2026-09-21T16:00", tz_hours: float = -7, strength: float = 1.0,
+                  air: float = 1.0, aerosol: float = 2.0):
     t = dt.datetime.fromisoformat(when).replace(tzinfo=dt.timezone(dt.timedelta(hours=tz_hours)))
     elev, az = solar_position(t)
     sun = bpy.data.objects.get("Sun") or bpy.data.objects.new("Sun", bpy.data.lights.new("Sun", "SUN"))
     if sun.name not in scn.collection.objects:
         scn.collection.objects.link(sun)
     # below the horizon the sun contributes nothing; the sky fades through civil twilight (-6..+6 deg)
-    sun.data.energy = 0.0 if elev <= 0 else 4.5 * strength * math.sin(math.radians(max(elev, 1))) ** 0.35
+    # strong key light (game-style key:fill ratio); gentle falloff only in the last few degrees above the horizon
+    sun.data.energy = 0.0 if elev <= 0 else 6.0 * strength * min(1.0, 0.35 + elev / 12.0)
     twilight = min(1.0, max(0.004, (elev + 6.0) / 12.0))
     sun.data.angle = math.radians(0.53)
+    # atmospheric reddening: white high sun -> warm amber near the horizon
+    t = min(1.0, max(0.0, elev / 35.0))
+    sun.data.color = (1.0, 0.62 + 0.36 * t, 0.38 + 0.57 * t)
     # light travels along -Z of the lamp: tilt by zenith, then spin so it points away from the sun azimuth
     sun.rotation_euler = (math.radians(90 - max(elev, 0.5)), 0, math.radians(180 - az))
     sun["elevation_deg"], sun["azimuth_deg"], sun["time"] = elev, az, when
@@ -73,20 +78,25 @@ def setup_sun_sky(scn, when: str = "2026-09-21T16:00", tz_hours: float = -7, str
         except TypeError:
             continue
     for attr, val in (("sun_elevation", math.radians(max(elev, 0.5))), ("sun_rotation", math.radians(90 - az)),
-                      ("altitude", 50.0), ("air_density", 1.0), ("aerosol_density", 2.0), ("dust_density", 2.0), ("sun_disc", True)):
+                      ("altitude", 50.0), ("air_density", air), ("aerosol_density", aerosol), ("dust_density", aerosol),
+                      ("sun_disc", True)):
         try:
             setattr(sky, attr, val)
         except (AttributeError, TypeError):
             pass
     # 5.x physical sky is very bright: weak as fill light, full strength where the camera sees it
-    bg.inputs["Strength"].default_value = 0.05 * strength * twilight
+    bg.inputs["Strength"].default_value = 0.12 * strength * twilight
     bgc = nt.nodes.new("ShaderNodeBackground")
-    bgc.inputs["Strength"].default_value = 0.6 * strength * twilight
+    bgc.inputs["Strength"].default_value = 0.38 * strength * twilight
     lp = nt.nodes.new("ShaderNodeLightPath")
     mix = nt.nodes.new("ShaderNodeMixShader")
     nt.links.new(sky.outputs["Color"], bg.inputs["Color"])
     nt.links.new(sky.outputs["Color"], bgc.inputs["Color"])
-    nt.links.new(lp.outputs["Is Camera Ray"], mix.inputs["Fac"])
+    seen = nt.nodes.new("ShaderNodeMath")  # camera and reflection rays see the full sky
+    seen.operation = "MAXIMUM"
+    nt.links.new(lp.outputs["Is Camera Ray"], seen.inputs[0])
+    nt.links.new(lp.outputs["Is Glossy Ray"], seen.inputs[1])
+    nt.links.new(seen.outputs[0], mix.inputs["Fac"])
     nt.links.new(bg.outputs["Background"], mix.inputs[1])
     nt.links.new(bgc.outputs["Background"], mix.inputs[2])
     nt.links.new(mix.outputs["Shader"], out.inputs["Surface"])
@@ -98,18 +108,24 @@ def setup_sun_sky(scn, when: str = "2026-09-21T16:00", tz_hours: float = -7, str
 # render, Phase 10). Atmospheric perspective/fog is done properly in Unreal (Exponential Height Fog).
 PRESETS = {
     #              local time (PDT)      night  exposure  haze density  sky   moon
-    "golden_hour": ("2026-09-21T18:35", 0.15, 0.3, 0.0, 1.0, 0.0),
+    "golden_hour": ("2026-09-21T18:15", 0.00, -0.3, 0.0, 1.0, 0.0),
     "midday":      ("2026-06-21T13:00", 0.00, -0.3, 0.0, 1.0, 0.0),
     "blue_hour":   ("2026-09-21T19:25", 0.45, 1.4, 0.0, 1.0, 0.0),
     "night":       ("2026-09-21T22:30", 1.00, 0.2, 0.0, 1.0, 0.06),
 }
 
 
-def apply_preset(scn, name="golden_hour", wetness=0.0):
+SKY = {"golden_hour": (1.0, 3.0), "blue_hour": (1.1, 2.5)}  # (air, aerosol) density: warmer, hazier skies
+
+
+def apply_preset(scn, name="golden_hour", wetness=0.0, when_override=None):
     import materials
     when, night, expo, haze, sky, moon = PRESETS[name]
-    elev, az = setup_sun_sky(scn, when)
+    air, aer = SKY.get(name, (1.0, 2.0))
+    elev, az = setup_sun_sky(scn, when_override or when, air=air, aerosol=aer)
     materials.set_globals(night=night, wetness=wetness)
+    use_hdri(scn, name, az, cam_strength={"golden_hour": 0.9, "midday": 0.8, "blue_hour": 0.9,
+                                          "night": 0.6}.get(name, 1.0))
     scn.view_settings.exposure = expo
     nt = scn.world.node_tree
     if haze > 0:  # atmospheric perspective: thin volume scatter in the world
@@ -170,3 +186,45 @@ def add_glare(scn):
         print("GLARE ok")
     except Exception as e:  # noqa: BLE001
         print(f"GLARE skipped: {e}")
+
+
+# ---------------------------------------------------------------- photographed sky (HDRI) for camera/reflections
+def _hdri_sun_azimuth(img):
+    """Azimuth (deg, clockwise from north, city frame) of the brightest region of an equirect HDRI."""
+    import numpy as np
+    w, h = img.size
+    px = np.empty(w * h * 4, np.float32)
+    img.pixels.foreach_get(px)
+    lum = px.reshape(h, w, 4)[..., :3].mean(-1)
+    lum = lum[h // 2:]  # upper hemisphere (image rows are bottom-up in Blender)
+    j = int(np.argmax(lum.max(0)))
+    u = (j + 0.5) / w
+    phi = (u - 0.5) * 2 * math.pi           # Blender equirect: dir = (-cos phi, sin phi, .)
+    x, y = -math.cos(phi), math.sin(phi)
+    return math.degrees(math.atan2(x, y)) % 360
+
+
+def use_hdri(scn, preset, sun_az, cam_strength=1.0):
+    import json
+    from bpy_common import ROOT
+    p = ROOT / "data/raw/textures/textures_manifest.json"
+    if not p.exists():
+        return False
+    h = json.loads(p.read_text()).get("hdri", {}).get(preset)
+    if not h:
+        return False
+    nt = scn.world.node_tree
+    img = bpy.data.images.load(str(ROOT / h["path"]), check_existing=True)
+    env = nt.nodes.new("ShaderNodeTexEnvironment")
+    env.image = img
+    tc = nt.nodes.new("ShaderNodeTexCoord")
+    mp = nt.nodes.new("ShaderNodeMapping")
+    rot = math.radians(sun_az - _hdri_sun_azimuth(img))  # spin the photo so its sun sits at our sun azimuth
+    mp.inputs["Rotation"].default_value = (0, 0, -rot)
+    nt.links.new(tc.outputs["Generated"], mp.inputs["Vector"])
+    nt.links.new(mp.outputs["Vector"], env.inputs["Vector"])
+    bgc = [n for n in nt.nodes if n.bl_idname == "ShaderNodeBackground"][1]  # camera/glossy background
+    nt.links.new(env.outputs["Color"], bgc.inputs["Color"])
+    bgc.inputs["Strength"].default_value = cam_strength
+    scn["hdri"] = h["id"]
+    return True

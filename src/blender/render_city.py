@@ -135,6 +135,37 @@ def main():
         rigs = cameras.add_rigs(scn)
         scn.camera = rigs[opt(a, "--rig")]
         scn.frame_set(opt(a, "--frame", 1, int))
+    if "--lamp-lights" in a:  # real point lights on the N street lamps nearest the camera (rest emissive)
+        nmax = opt(a, "--lamp-lights", 300, int)
+        pts = []
+        for t in tiles:
+            f = ROOT / "data/processed/tiles" / t["id"] / "mesh_props_lod1.npz"
+            if f.exists():
+                d = np.load(f)
+                k = d["p_kind"] == 0
+                if k.any():
+                    v, r = d["verts"][k], d["p_rot"][k]
+                    head = np.c_[v[:, 0] + 1.75 * np.cos(r), v[:, 1] + 1.75 * np.sin(r), v[:, 2] + 7.1]
+                    pts.append(head + np.array(t["offset_city"]))
+        if pts:
+            P = np.concatenate(pts)
+            c = np.array(scn.camera.location)
+            near = P[np.argsort(np.linalg.norm(P - c, axis=1))[:nmax]]
+            ld = bpy.data.lights.new("street_lamp", "POINT")
+            ld.energy, ld.color, ld.shadow_soft_size = 900.0, (1.0, 0.70, 0.42), 0.25
+            try:
+                ld.use_shadow = False
+            except AttributeError:
+                pass
+            for i, q in enumerate(near):
+                o = bpy.data.objects.new(f"lamp_light_{i}", ld)
+                o.location = q
+                scn.collection.objects.link(o)
+            print(f"LAMPS {len(near)} point lights")
+    if "--look" in a:  # game-look VFX stack (engine quality + compositor post)
+        import vfx
+        dof = tuple(float(v) for v in opt(a, "--dof").split(",")) if "--dof" in a else None
+        vfx.apply(scn, opt(a, "--look"), dof=dof, samples=opt(a, "--samples", 64, int))
     out = ROOT / opt(a, "--out", "renders/test.png")
     dt = render_png(out, res)
     print(f"RENDER {out} tiles lod0={n['lod0']} lod1={n['lod1']} engine={eng} sun elev={elev:.1f} az={az:.1f} "

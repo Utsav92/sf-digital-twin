@@ -80,11 +80,10 @@ def build_tile(tile, index):
             if layer == "trees":
                 continue  # instanced separately (Phase 8)
             build_mesh_layer(layer, lod, tile, top, rep)
-    try:
-        import trees_instancing
-        trees_instancing.build(tile, scn, rep)
-    except ImportError:
-        pass
+    import props_instancing
+    import trees_instancing
+    trees_instancing.build(tile, scn, rep)
+    props_instancing.build(tile, scn, rep)
     out = OUT / tile["id"] / f"{tile['id']}.blend"
     save_blend_atomic(out)
     # LOD0-only companion file: the master links this one so LOD1 data is never read for the city view

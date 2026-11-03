@@ -79,8 +79,33 @@ SLOTS = {
 }
 
 
-def get_mat(name: str) -> bpy.types.Material:
+MATLIB = None
+
+
+def _from_library(name):
+    """Link `name` from the shared material library (out/city/sf_materials.blend) if it exists."""
+    global MATLIB
+    from bpy_common import ROOT
+    lib = ROOT / "out/city/sf_materials.blend"
+    if not lib.exists():
+        return None
+    with bpy.data.libraries.load(str(lib), link=True, relative=True) as (src, dst):
+        if name not in src.materials:
+            return None
+        dst.materials = [name]
+    return dst.materials[0]
+
+
+def get_mat(name: str, local: bool = False) -> bpy.types.Material:
     m = bpy.data.materials.get(name)
+    if m is not None:
+        return m
+    if not local:  # tiles link shared materials -> textures load once per render, not once per tile
+        m = _from_library(name)
+        if m is not None:
+            return m
+    import materials_pbr  # textured (CC0) game-look materials take precedence when textures are present
+    m = materials_pbr.get(name)
     if m is not None:
         return m
     if name in SPECIAL:
@@ -235,7 +260,7 @@ def facade_material(name, tall):
     # window mask
     uc = _math(nt, "FRACT", _math(nt, "DIVIDE", u, bay))
     vc = _math(nt, "FRACT", _math(nt, "DIVIDE", v, floor_h))
-    lo_u, hi_u, lo_v, hi_v = (0.07, 0.93, 0.08, 0.92) if tall else (0.22, 0.78, 0.30, 0.85)
+    lo_u, hi_u, lo_v, hi_v = (0.03, 0.97, 0.04, 0.96) if tall else (0.22, 0.78, 0.30, 0.85)
     mu = _math(nt, "MULTIPLY", _math(nt, "GREATER_THAN", uc, lo_u), _math(nt, "LESS_THAN", uc, hi_u))
     mv = _math(nt, "MULTIPLY", _math(nt, "GREATER_THAN", vc, lo_v), _math(nt, "LESS_THAN", vc, hi_v))
     above = _math(nt, "GREATER_THAN", v, 0.9 if tall else 2.6)
@@ -243,8 +268,8 @@ def facade_material(name, tall):
     # wall colour: palette by building hash (stucco) or blue-grey glass curtain
     ramp = nt.nodes.new("ShaderNodeValToRGB")
     ramp.color_ramp.interpolation = "CONSTANT"
-    pal = SF_PASTELS if not tall else [(0.42, 0.48, 0.52), (0.55, 0.58, 0.60), (0.36, 0.42, 0.48),
-                                       (0.62, 0.62, 0.60), (0.30, 0.36, 0.40)]
+    pal = SF_PASTELS if not tall else [(0.10, 0.11, 0.12), (0.16, 0.16, 0.17), (0.22, 0.22, 0.21),
+                                       (0.13, 0.15, 0.17), (0.30, 0.30, 0.29)]  # mullion / spandrel colours
     els = ramp.color_ramp.elements
     els[0].color = (*pal[0], 1)
     els[1].position, els[1].color = 1.0 - 1e-3, (*pal[-1], 1)
@@ -252,27 +277,38 @@ def facade_material(name, tall):
         e = els.new(i / len(pal))
         e.color = (*c, 1)
     nt.links.new(bidh, ramp.inputs["Fac"])
-    glass = (0.05, 0.07, 0.09, 1) if not tall else (0.10, 0.15, 0.19, 1)
+    glass = (0.05, 0.07, 0.09, 1) if not tall else (0.26, 0.30, 0.33, 1)
     mixc = nt.nodes.new("ShaderNodeMix")
     mixc.data_type = "RGBA"
     nt.links.new(mask, mixc.inputs["Factor"])
     nt.links.new(ramp.outputs["Color"], mixc.inputs["A"])
     mixc.inputs["B"].default_value = glass
+    if tall:  # per-tower glass tint: blue / green / bronze / silver / dark
+        gr = nt.nodes.new("ShaderNodeValToRGB")
+        gr.color_ramp.interpolation = "CONSTANT"
+        tints = [(0.20, 0.27, 0.34), (0.22, 0.30, 0.28), (0.33, 0.27, 0.20), (0.36, 0.37, 0.38), (0.12, 0.14, 0.17)]
+        e = gr.color_ramp.elements
+        e[0].color = (*tints[0], 1)
+        e[1].position, e[1].color = 1 - 1e-3, (*tints[-1], 1)
+        for i, c in enumerate(tints[1:-1], 1):
+            e.new(i / len(tints)).color = (*c, 1)
+        nt.links.new(_hash1d(nt, _math(nt, "ADD", attr.outputs["Fac"], 0.71)), gr.inputs["Fac"])
+        nt.links.new(gr.outputs["Color"], mixc.inputs["B"])
     nt.links.new(mixc.outputs["Result"], bsdf.inputs["Base Color"])
-    rough = _math(nt, "ADD", 0.85 if not tall else 0.45, _math(nt, "MULTIPLY", mask, -0.78 if not tall else -0.40))
+    rough = _math(nt, "ADD", 0.85 if not tall else 0.45, _math(nt, "MULTIPLY", mask, -0.78 if not tall else -0.41))
     nt.links.new(rough, bsdf.inputs["Roughness"])
-    met = _math(nt, "MULTIPLY", mask, 0.0 if not tall else 0.6)
+    met = _math(nt, "MULTIPLY", mask, 0.0 if not tall else 0.65)
     nt.links.new(met, bsdf.inputs["Metallic"])
     # night: random ~35% of windows lit, warm
     wid = _math(nt, "ADD", _math(nt, "FLOOR", _math(nt, "DIVIDE", u, bay)),
                 _math(nt, "MULTIPLY", _math(nt, "FLOOR", _math(nt, "DIVIDE", v, floor_h)), 131.0))
     wid = _math(nt, "ADD", wid, _math(nt, "MULTIPLY", attr.outputs["Fac"], 0.618))
-    lit = _math(nt, "GREATER_THAN", _hash1d(nt, wid), 0.75)
+    lit = _math(nt, "GREATER_THAN", _hash1d(nt, wid), 0.85)
     gg = nt.nodes.new("ShaderNodeGroup")
     gg.node_tree = globals_group()
     em = _math(nt, "MULTIPLY", _math(nt, "MULTIPLY", mask, lit), gg.outputs["night"])
     bsdf.inputs["Emission Color"].default_value = (1.0, 0.72, 0.42, 1)
-    nt.links.new(_math(nt, "MULTIPLY", em, 3.5), bsdf.inputs["Emission Strength"])
+    nt.links.new(_math(nt, "MULTIPLY", em, 2.2), bsdf.inputs["Emission Strength"])
     return m
 
 
@@ -303,14 +339,14 @@ def water_material(name, rgb):
     nt = m.node_tree
     bsdf = nt.nodes["Principled BSDF"]
     bsdf.inputs["Base Color"].default_value = (*rgb, 1)
-    bsdf.inputs["Roughness"].default_value = 0.06
+    bsdf.inputs["Roughness"].default_value = 0.14
     bsdf.inputs["IOR"].default_value = 1.33
     geo = nt.nodes.new("ShaderNodeNewGeometry")
     nz = nt.nodes.new("ShaderNodeTexNoise")
-    nz.inputs["Scale"].default_value = 0.08
-    nz.inputs["Detail"].default_value = 8
+    nz.inputs["Scale"].default_value = 0.18
+    nz.inputs["Detail"].default_value = 10
     bump = nt.nodes.new("ShaderNodeBump")
-    bump.inputs["Strength"].default_value = 0.25
+    bump.inputs["Strength"].default_value = 0.45
     nt.links.new(geo.outputs["Position"], nz.inputs["Vector"])
     nt.links.new(nz.outputs["Fac"], bump.inputs["Height"])
     nt.links.new(bump.outputs["Normal"], bsdf.inputs["Normal"])
@@ -334,9 +370,96 @@ SPECIAL = {
     "bldg_wall_tall": lambda n: facade_material(n, True),
     "bldg_roof": lambda n: roof_material(n, False),
     "bldg_roof_pitched": lambda n: roof_material(n, True),
-    "water_bay": lambda n: water_material(n, (0.04, 0.11, 0.14)),
+    "water_bay": lambda n: water_material(n, (0.025, 0.08, 0.11)),
     "water_lake": lambda n: water_material(n, (0.05, 0.12, 0.10)),
     "road_motorway": lambda n: road_material(n, (0.20, 0.20, 0.21), 0.8),
     "road_arterial": lambda n: road_material(n, (0.18, 0.18, 0.19), 0.8),
     "road_local": lambda n: road_material(n, (0.22, 0.22, 0.22), 0.85),
 }
+
+
+# ---------------------------------------------------------------- props: cars + street lamps
+CAR_COLORS = [(0.85, 0.85, 0.83), (0.04, 0.04, 0.045), (0.55, 0.56, 0.57), (0.28, 0.29, 0.30), (0.06, 0.10, 0.22),
+              (0.45, 0.04, 0.03), (0.75, 0.75, 0.76), (0.12, 0.20, 0.14), (0.52, 0.42, 0.30), (0.02, 0.15, 0.35)]
+
+
+def car_paint(name):
+    m = bpy.data.materials.new(name)
+    m["sf_material"] = name
+    m.use_nodes = True
+    nt = m.node_tree
+    b = nt.nodes["Principled BSDF"]
+    a = nt.nodes.new("ShaderNodeAttribute")
+    a.attribute_type = "INSTANCER"
+    a.attribute_name = "paint"
+    ramp = nt.nodes.new("ShaderNodeValToRGB")
+    ramp.color_ramp.interpolation = "CONSTANT"
+    e = ramp.color_ramp.elements
+    e[0].color = (*CAR_COLORS[0], 1)
+    e[1].position, e[1].color = 1 - 1e-3, (*CAR_COLORS[-1], 1)
+    for i, c in enumerate(CAR_COLORS[1:-1], 1):
+        e.new(i / len(CAR_COLORS)).color = (*c, 1)
+    nt.links.new(a.outputs["Fac"], ramp.inputs["Fac"])
+    nt.links.new(ramp.outputs["Color"], b.inputs["Base Color"])
+    b.inputs["Roughness"].default_value = 0.25
+    b.inputs["Metallic"].default_value = 0.4
+    try:
+        b.inputs["Coat Weight"].default_value = 0.8
+        b.inputs["Coat Roughness"].default_value = 0.05
+    except KeyError:
+        pass
+    return m
+
+
+def night_emitter(name, rgb, strength, base=(0.9, 0.9, 0.85), day_strength=0.0):
+    """Emission scaled by SF_Globals.night (headlights, tail lights, lamp heads)."""
+    m = bpy.data.materials.new(name)
+    m["sf_material"] = name
+    m.use_nodes = True
+    nt = m.node_tree
+    b = nt.nodes["Principled BSDF"]
+    b.inputs["Base Color"].default_value = (*base, 1)
+    b.inputs["Roughness"].default_value = 0.2
+    b.inputs["Emission Color"].default_value = (*rgb, 1)
+    gg = nt.nodes.new("ShaderNodeGroup")
+    gg.node_tree = globals_group()
+    s = _math(nt, "ADD", _math(nt, "MULTIPLY", gg.outputs["night"], strength), day_strength)
+    nt.links.new(s, b.inputs["Emission Strength"])
+    return m
+
+
+LIB.update({
+    "car_glass": ((0.03, 0.035, 0.04), 0.05, 0.3, 0.0, 0.0),
+    "car_tire": ((0.03, 0.03, 0.03), 0.9, 0.0, 0.0, 0.0),
+    "lamp_pole": ((0.18, 0.19, 0.20), 0.5, 0.7, 0.0, 0.0),
+})
+SPECIAL.update({
+    "car_paint": car_paint,
+    "headlight": lambda n: night_emitter(n, (1.0, 0.95, 0.85), 40.0),
+    "taillight": lambda n: night_emitter(n, (1.0, 0.05, 0.02), 15.0, base=(0.5, 0.02, 0.02), day_strength=0.3),
+    "lamp_glow": lambda n: night_emitter(n, (1.0, 0.72, 0.42), 60.0),
+})
+PAINTS = [(0.86, 0.86, 0.84), (0.03, 0.03, 0.035), (0.55, 0.56, 0.57), (0.26, 0.27, 0.28), (0.05, 0.09, 0.22),
+          (0.50, 0.03, 0.03), (0.70, 0.71, 0.72), (0.10, 0.17, 0.13)]
+
+
+def paint_mat(name, rgb):
+    m = bpy.data.materials.new(name)
+    m["sf_material"] = name
+    m.use_nodes = True
+    b = m.node_tree.nodes["Principled BSDF"]
+    b.inputs["Base Color"].default_value = (*rgb, 1)
+    b.inputs["Roughness"].default_value = 0.35
+    b.inputs["Metallic"].default_value = 0.05
+    try:
+        b.inputs["Coat Weight"].default_value = 0.45
+        b.inputs["Coat Roughness"].default_value = 0.08
+    except KeyError:
+        pass
+    return m
+
+
+for _i, _c in enumerate(PAINTS):
+    SPECIAL[f"car_paint_{_i}"] = (lambda c: (lambda n: paint_mat(n, c)))(_c)
+SLOTS["props"] = ["lamp_pole", "lamp_glow", "car_glass", "car_tire", "headlight", "taillight"] + \
+    [f"car_paint_{i}" for i in range(len(PAINTS))]

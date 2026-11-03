@@ -43,7 +43,8 @@ with 6 processes.
 | Muni GTFS (optional, live layers) | 511.org (needs `SF511_API_KEY`) | 511 SF Bay open data terms |
 
 `data/raw/fetch_manifest.json` records the URL, size, sha256, record counts and fetch time for every source.
-No third-party 3D assets or textures are used: all geometry and materials are procedural.
+Textures and sky HDRIs: Poly Haven, CC0 1.0 (`data/raw/textures/textures_manifest.json` lists every
+asset). No other third-party assets are used: all 3D geometry is generated procedurally.
 
 ## Pipeline
 ```
@@ -75,6 +76,29 @@ writes verification renders into `renders/`.
   than 5% to ground + 6.5 m x layer, or to the water clearance of the Golden Gate (67 m) and Bay Bridge.
 - **Trees:** 148,005 data trees (DataSF + OSM) plus 60,661 procedural trees in OSM forest/wood polygons,
   flagged `source=procedural`. Instanced through Geometry Nodes, with 3 species classes.
+
+## Game-look rendering in Blender (EEVEE + VFX stack)
+`./src/blender/render_showcase.sh [1920x1080]` renders `renders/showcase/` (contact sheet and before/after
+images). Any view works through `render_city.py ... --preset golden_hour|midday|blue_hour|night --look
+golden|day|dusk|night [--wet 0.8] [--dof 150,4] [--lamp-lights 400]`.
+- **Materials:** CC0 Poly Haven PBR texture sets (asphalt, concrete, plaster, brick, clay roof tiles,
+  aerial grass/sand/rock/forest, gravel) on metre-scale UVs. Facades get a per-building palette, about 22%
+  brick, reflective windows and per-tower tinted glass curtain walls. Wet roads use puddles and gloss
+  driven by `sf_wetness`. Cars have clear-coat paint in 8 colours. Foliage is translucent with colour
+  variation.
+- **All materials live in one shared library**, `out/city/sf_materials.blend`, which every tile links.
+  This means textures load once per render: a city render uses 5.4 GB, where per-tile copies ran out of
+  memory. Material tweaks need only `build_material_library.py`, not a tile rebuild.
+- **Lighting:** physical sun from the solar position, warming near the horizon. A CC0 photographed sky
+  HDRI per preset is used for the camera and reflections, rotated so its sun matches the real azimuth.
+  Procedural sky provides fill. EEVEE ray-traced reflections, fast GI and soft shadows are enabled.
+- **Post (compositor):** mist-pass atmospheric haze, Fog-Glow bloom, lens dispersion, lift/gain grade,
+  S-curve, vignette and film grain.
+- **Street life** (`geom/props.py`, deterministic): 55,335 street lamps and 334,612 parked and moving cars
+  (3 body types, 8 paints, head and tail lights that turn on at night), Geometry Nodes instanced. At night
+  the N nearest lamps become real point lights and the rest stay emissive.
+- **Trees:** lobed, noise-displaced crowns, tiered conifers and frond palms (LOD1); cheap silhouettes
+  (LOD0).
 
 ## Unreal export (Phase 11, done for the pilot)
 - `out/unreal/tiles/<id>/<id>.usdc`: LOD1 per tile, triangulated (Nanite-friendly), metre UVs (wall UV =
