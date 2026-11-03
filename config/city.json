@@ -1,0 +1,102 @@
+{
+  "project": "sf_digital_twin",
+  "crs": "EPSG:26910",
+  "crs_name": "NAD83 / UTM zone 10N (meters)",
+  "vertical_datum": "NAVD88 (meters)",
+  "units": "1 Blender unit = 1 meter, Z up",
+  "origin": {
+    "name": "Ferry Building",
+    "lon": -122.3934,
+    "lat": 37.79554
+  },
+  "city_bbox_wgs84": {
+    "comment": "SF county land + Treasure Island, Yerba Buena Island, Alcatraz. Farallones excluded.",
+    "west": -122.516,
+    "south": 37.7066,
+    "east": -122.355,
+    "north": 37.833
+  },
+  "grid": {
+    "tile_size_m": 500,
+    "margin_m": 300,
+    "align": "origin_corner"
+  },
+  "pilot": {
+    "comment": "2x2 km Financial District / SoMa / North Beach, local meters relative to origin",
+    "xmin": -1500,
+    "ymin": -1000,
+    "xmax": 500,
+    "ymax": 1000
+  },
+  "terrain": {
+    "lattice_m": 2.0,
+    "lod0_lattice_m": 10.0
+  },
+  "parallel": {
+    "prep_workers": 12,
+    "blender_procs": 6
+  },
+  "paths": {
+    "raw": "data/raw",
+    "processed": "data/processed",
+    "renders": "renders",
+    "tiles_out": "out/tiles",
+    "city_out": "out/city",
+    "logs": "logs"
+  },
+  "landmarks_check": {
+    "ferry_building": {
+      "lon": -122.3934,
+      "lat": 37.79554,
+      "ground_m": [
+        0,
+        3
+      ]
+    },
+    "salesforce_tower": {
+      "lon": -122.39694,
+      "lat": 37.78977,
+      "height_m": 326
+    },
+    "transamerica": {
+      "lon": -122.40278,
+      "lat": 37.79519,
+      "height_m": 260
+    },
+    "coit_tower": {
+      "lon": -122.40584,
+      "lat": 37.80239,
+      "ground_m": [
+        80,
+        95
+      ]
+    },
+    "twin_peaks": {
+      "lon": -122.44772,
+      "lat": 37.75162,
+      "ground_m": [
+        275,
+        290
+      ],
+      "note": "south summit, published 922 ft = 281 m"
+    },
+    "sutro_tower": {
+      "lon": -122.45276,
+      "lat": 37.75523,
+      "ground_m": [
+        250,
+        280
+      ],
+      "note": "tower base, published ~834 ft = 254 m"
+    },
+    "mt_davidson": {
+      "lon": -122.45476,
+      "lat": 37.73834,
+      "ground_m": [
+        275,
+        290
+      ],
+      "note": "published 928 ft = 283 m"
+    }
+  }
+}

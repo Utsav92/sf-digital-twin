@@ -1,0 +1,11 @@
+# large/binary, reproducible outputs (rebuild with ./run_all.sh)
+.venv/
+data/
+out/
+renders/
+logs/
+__pycache__/
+*.blend
+*.blend1
+*.usdc
+.DS_Store

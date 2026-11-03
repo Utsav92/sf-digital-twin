@@ -1,0 +1,22 @@
+{
+  "comment": "Blender material -> Unreal master material instance name (1:1). Used by export_unreal.py and the Unreal importer.",
+  "ground": "MAT_Ground_Soil", "seabed": "MAT_Ground_Seabed", "beach": "MAT_Ground_Sand", "grass": "MAT_Grass_Lawn",
+  "park": "MAT_Grass_Park", "forest": "MAT_Ground_ForestFloor", "scrub": "MAT_Ground_Scrub", "golf": "MAT_Grass_Golf",
+  "cemetery": "MAT_Grass_Park", "sport": "MAT_Grass_Sport", "paved": "MAT_Paving_Concrete",
+  "industrial": "MAT_Paving_Industrial", "rail_yard": "MAT_Ground_Gravel", "construction": "MAT_Ground_Dirt",
+  "rock": "MAT_Rock_Cliff", "wetland": "MAT_Ground_Wetland", "residential": "MAT_Ground_Urban",
+  "commercial": "MAT_Paving_Concrete",
+  "water_bay": "MAT_Water_Bay", "water_lake": "MAT_Water_Lake",
+  "road_motorway": "MAT_Road_Asphalt_Highway", "road_arterial": "MAT_Road_Asphalt", "road_local": "MAT_Road_Asphalt_Local",
+  "road_service": "MAT_Road_Asphalt_Service", "path": "MAT_Path_Gravel", "sidewalk": "MAT_Sidewalk_Concrete",
+  "bridge_deck": "MAT_Bridge_Deck", "bridge_struct": "MAT_Bridge_Steel_Gray", "pier": "MAT_Pier_Concrete",
+  "rail_track": "MAT_Rail_Ballast", "rail_cable_car": "MAT_Rail_Embedded",
+  "bldg_wall": "MAT_Facade_Stucco", "bldg_wall_tall": "MAT_Glass_Curtain", "bldg_roof": "MAT_Roof_Flat",
+  "bldg_roof_pitched": "MAT_Roof_Tile",
+  "tree_trunk": "MAT_Bark", "tree_crown": "MAT_Foliage_Broadleaf", "tree_conifer": "MAT_Foliage_Conifer",
+  "tree_palm": "MAT_Foliage_Palm",
+  "white_stone": "MAT_Stone_White", "concrete": "MAT_Concrete", "glass": "MAT_Glass_Curtain", "gold": "MAT_Metal_Gold",
+  "copper_green": "MAT_Metal_Copper", "sutro_red": "MAT_Paint_SutroRed", "sutro_white": "MAT_Paint_White",
+  "stadium_brick": "MAT_Facade_Brick", "terracotta": "MAT_Stone_Terracotta",
+  "ggb_orange": "MAT_Bridge_Steel_InternationalOrange"
+}
