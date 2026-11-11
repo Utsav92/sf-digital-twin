@@ -23,3 +23,5 @@ web/splat/
 web/renders/
 *.bak*
 *.mp4
+
+!media/*.mp4

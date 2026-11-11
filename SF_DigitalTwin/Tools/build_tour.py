@@ -3,6 +3,10 @@ import json, os, unreal
 J = json.load(open(os.path.expanduser("~/sf_twin/SF_DigitalTwin/Tools/tour.json")))
 FPS = J["fps"]; tools = unreal.AssetToolsHelpers.get_asset_tools()
 ONLY = os.environ.get("SF_ONLY_SHOT"); SEQ = os.environ.get("SF_SEQ_NAME", "SF_Tour")
+REEL = os.environ.get("SF_REEL")  # vertical 9:16 reel: chosen shots, 4 s each, portrait film back
+if REEL:
+    PICK = ["reveal", "bridge_pushin", "canyon_dive", "twin_peaks", "tower_orbit", "pull_up"]; NF = 120
+    J["shots"] = [dict(s, keys=[[round(k[0] * NF / s["frames"])] + k[1:] for k in s["keys"]], frames=NF) for n in PICK for s in J["shots"] if s["name"] == n]
 if ONLY: J["shots"] = [x for x in J["shots"] if x["name"] == ONLY]
 path = "/Game/Cinematics/" + SEQ
 if unreal.EditorAssetLibrary.does_asset_exist(path): unreal.EditorAssetLibrary.delete_asset(path)
@@ -14,8 +18,8 @@ t0 = 0
 for s in J["shots"]:
     b = seq.add_spawnable_from_class(unreal.CineCameraActor); b.set_name("Cam_" + s["name"])
     tmpl = b.get_object_template(); comp = tmpl.get_cine_camera_component() or tmpl.get_component_by_class(unreal.CineCameraComponent) or tmpl.get_editor_property('camera_component')
-    comp.set_editor_property("current_focal_length", s["focal"]); comp.set_editor_property("current_aperture", 4.0)
-    comp.filmback = unreal.CameraFilmbackSettings(sensor_width=24.89, sensor_height=14.0)
+    comp.set_editor_property("current_focal_length", s["focal"] * (0.62 if REEL else 1.0)); comp.set_editor_property("current_aperture", 4.0)
+    comp.filmback = unreal.CameraFilmbackSettings(sensor_width=14.0, sensor_height=24.89) if REEL else unreal.CameraFilmbackSettings(sensor_width=24.89, sensor_height=14.0)
     comp.set_editor_property("constrain_aspect_ratio", False)
     fs = comp.get_editor_property("focus_settings"); fs.focus_method = unreal.CameraFocusMethod.DISABLE; comp.set_editor_property("focus_settings", fs)
     tr = b.add_track(unreal.MovieScene3DTransformTrack); sec = tr.add_section(); sec.set_range(t0, t0 + s["frames"] + 1)
