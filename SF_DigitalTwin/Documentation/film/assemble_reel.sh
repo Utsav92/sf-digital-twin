@@ -1,7 +1,7 @@
 #!/bin/bash
 # usage: assemble_reel.sh <frames_dir> <out.mp4>   1080x1920 portrait, 30 fps, ~24 s
 set -e; D=$(cd "$(dirname "$0")" && pwd); F=$1; OUT=$2
-say -v Daniel -r 185 -o /tmp/sf_reel_vo.aiff -f "$D/narration_reel.txt"
+say -v Daniel -r 128 -o /tmp/sf_reel_vo.aiff -f "$D/narration_reel.txt"
 DUR=$(ffmpeg -i /tmp/sf_reel_vo.aiff 2>&1 | awk -F'[:, ]+' '/Duration/{print $3*3600+$4*60+$5}')
 TEMPO=$(python3 -c "print(max(1.0, round($DUR/22.5, 3)))")
 echo "voice ${DUR}s tempo ${TEMPO}"
