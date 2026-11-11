@@ -1,0 +1,468 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>San Francisco Digital Twin</title>
+<script type="importmap">{"imports":{"three":"./vendor/three.module.js"}}</script>
+<style>
+  :root { --bg:#0e1116; --panel:rgba(14,17,22,.82); --ink:#e8ecf2; --dim:#9aa4b2; --accent:#ffb454; --line:rgba(255,255,255,.12); }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; overflow:hidden; background:var(--bg); color:var(--ink); font:13px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  #gl { position:fixed; inset:0; display:block; }
+  #ov { position:fixed; inset:0; pointer-events:none; display:none; }
+  #ov img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+  #ovTop { clip-path:inset(0 0 0 50%); }
+  #divider { position:fixed; top:0; bottom:0; width:2px; background:var(--accent); display:none; pointer-events:none; left:50%; }
+  #divider::after { content:"⇔"; position:absolute; top:50%; left:-13px; width:28px; height:28px; border-radius:50%; background:var(--accent); color:#111; text-align:center; line-height:28px; font-weight:700; }
+  #panel { position:fixed; top:12px; left:12px; width:300px; max-height:calc(100% - 24px); overflow:auto; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px 14px; backdrop-filter:blur(8px); }
+  #panel h1 { font-size:15px; margin:0 0 2px; } #panel .sub { color:var(--dim); margin-bottom:10px; }
+  h2 { font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--dim); margin:14px 0 6px; font-weight:600; }
+  label { display:flex; align-items:center; gap:6px; margin:3px 0; cursor:pointer; }
+  button, select { background:#1b212b; color:var(--ink); border:1px solid var(--line); border-radius:6px; padding:5px 9px; font:inherit; cursor:pointer; }
+  button:hover { border-color:var(--accent); } button.on { background:var(--accent); color:#111; border-color:var(--accent); }
+  .row { display:flex; flex-wrap:wrap; gap:6px; } input[type=range] { width:100%; accent-color:var(--accent); }
+  #hud { position:fixed; right:12px; bottom:12px; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:6px 10px; color:var(--dim); font-variant-numeric:tabular-nums; }
+  #load { position:fixed; left:0; right:0; top:0; height:3px; background:var(--accent); transform-origin:left; transform:scaleX(0); transition:transform .2s; }
+  #note { position:fixed; bottom:12px; left:50%; transform:translateX(-50%); background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:6px 12px; display:none; max-width:70vw; text-align:center; }
+  .hint { color:var(--dim); font-size:12px; margin-top:6px; }
+  @media (max-width:640px){ #panel { width:calc(100% - 24px); max-height:46%; } }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="ov"><img id="ovBottom" alt=""><img id="ovTop" alt=""></div>
+<div id="divider"></div>
+<div id="load"></div>
+<div id="note"></div>
+<div id="panel">
+  <h1>San Francisco Digital Twin</h1>
+  <div class="sub">Whole city, live in WebGL · 618 tiles · built from open data</div>
+
+  <h2>Views</h2>
+  <div class="row" id="views"></div>
+  <div class="row" style="margin-top:6px">
+    <button id="btnDrone">▶ Drone flythrough</button>
+    <button id="btnCar">▶ Car chase cam</button>
+  </div>
+
+  <h2>Time of day</h2>
+  <input id="hour" type="range" min="5" max="21" step="0.05" value="16.7">
+  <div class="hint" id="hourLabel"></div>
+
+  <h2>Layers</h2>
+  <label><input type="checkbox" data-layer="terrain" checked> Terrain</label>
+  <label><input type="checkbox" data-layer="water" checked> Water</label>
+  <label><input type="checkbox" data-layer="roads" checked> Roads &amp; bridges</label>
+  <label><input type="checkbox" data-layer="buildings" checked> Buildings (174k)</label>
+  <label><input type="checkbox" data-layer="trees" checked> Trees</label>
+  <label><input type="checkbox" id="shadows" checked> Real-time shadows</label>
+
+  <h2>Gaussian splat (pilot district)</h2>
+  <div class="row"><button id="btnSplat">Load Gaussian splat</button></div>
+  <label><input type="checkbox" id="hideMesh" checked> Hide mesh under the splat</label>
+  <div class="hint" id="splatInfo">Financial District / SoMa / North Beach, built from 498 calibrated views.</div>
+
+  <h2>Blender renders</h2>
+  <select id="renderSel" style="width:100%"></select>
+  <div class="row" style="margin-top:6px">
+    <button id="btnGo">Go to render camera</button>
+  </div>
+  <div class="row" style="margin-top:6px" id="cmpRow"></div>
+  <input id="wipe" type="range" min="0" max="100" value="50" style="margin-top:8px;display:none">
+  <div class="hint" id="cmpHint">Overlay the real Cycles / EEVEE renders on the live view and wipe between them.</div>
+
+  <div class="hint" style="margin-top:12px">Drag = orbit · right-drag / shift = pan · wheel = zoom · W A S D / Q E = fly</div>
+</div>
+<div id="hud">loading…</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from './vendor/jsm/OrbitControls.js';
+import { Sky } from './vendor/jsm/Sky.js';
+
+const $ = (s) => document.querySelector(s);
+const canvas = $('#gl');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.toneMapping = THREE.AgXToneMapping;      // same view transform as the Blender renders
+renderer.toneMappingExposure = 1.0;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 1, 60000);
+camera.position.set(-1250, 260, 1450);
+const controls = new OrbitControls(camera, canvas);
+controls.target.set(-300, 20, 250);
+controls.enableDamping = true; controls.dampingFactor = 0.08;
+controls.maxPolarAngle = Math.PI * 0.495; controls.minDistance = 3; controls.zoomToCursor = true;
+controls.update();
+
+// ---------------------------------------------------------------- sky, sun, atmosphere
+const sky = new Sky(); sky.scale.setScalar(450000); scene.add(sky);
+const su = sky.material.uniforms;
+su.turbidity.value = 5; su.rayleigh.value = 1.4; su.mieCoefficient.value = 0.005; su.mieDirectionalG.value = 0.8;
+const sunDir = new THREE.Vector3();
+const sun = new THREE.DirectionalLight(0xffffff, 3);
+sun.castShadow = true;
+sun.shadow.mapSize.set(4096, 4096);
+const sc = sun.shadow.camera; sc.left = -650; sc.right = 650; sc.top = 650; sc.bottom = -650; sc.near = 1; sc.far = 4000;
+sun.shadow.bias = -0.0004; sun.shadow.radius = 2;
+scene.add(sun, sun.target);
+const hemi = new THREE.HemisphereLight(0xbdd4f0, 0x544a40, 0.9); scene.add(hemi);
+scene.fog = new THREE.FogExp2(0xb7c8dc, 0.00006);
+const pmrem = new THREE.PMREMGenerator(renderer);
+const sceneEnv = new THREE.Scene();
+let envRT;
+const nightU = { value: 0 };
+const bldMats = [];
+
+function setHour(h) {
+  const el = THREE.MathUtils.degToRad(Math.max(-12, 52 * Math.sin(Math.PI * (h - 6) / 12)));
+  const az = THREE.MathUtils.degToRad(90 + (h - 6) * 15);      // from north, clockwise: east (6h) -> west (18h)
+  sunDir.set(Math.sin(az) * Math.cos(el), Math.sin(el), -Math.cos(az) * Math.cos(el));
+  su.sunPosition.value.copy(sunDir);
+  const day = THREE.MathUtils.smoothstep(THREE.MathUtils.radToDeg(el), -4, 8);
+  const warm = 1 - THREE.MathUtils.smoothstep(THREE.MathUtils.radToDeg(el), 4, 35);
+  sun.color.setRGB(1, 0.78 + 0.22 * (1 - warm), 0.55 + 0.45 * (1 - warm));
+  sun.intensity = 3.4 * day;
+  hemi.intensity = 0.15 + 0.85 * day;
+  scene.fog.color.setRGB(0.04 + 0.68 * day, 0.05 + 0.75 * day, 0.09 + 0.8 * day);
+  scene.fog.density = 0.00004 + 0.00004 * (1 - day);
+  nightU.value = 1 - day;
+  renderer.toneMappingExposure = 0.9 + 0.5 * (1 - day);
+  $('#hourLabel').textContent = `${String(Math.floor(h)).padStart(2, '0')}:${String(Math.round((h % 1) * 60)).padStart(2, '0')} · sun ${THREE.MathUtils.radToDeg(el).toFixed(0)}° above the horizon`;
+  if (envRT) envRT.dispose();
+  sceneEnv.add(sky); envRT = pmrem.fromScene(sceneEnv); scene.add(sky);
+  scene.environment = envRT.texture;
+  const ei = 0.55 * day + 0.08;
+  for (const m of [...Object.values(M), sea.material, crownMat, trunkMat]) m.envMapIntensity = ei;
+}
+$('#hour').addEventListener('input', (e) => setHour(parseFloat(e.target.value)));
+
+// ---------------------------------------------------------------- materials
+function windowed(mat) {
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uNight = nightU;
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute float kind; varying float vKind; varying vec3 vWPos;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvKind = kind; vWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying float vKind; varying vec3 vWPos; uniform float uNight;\nfloat hash21(vec2 p){ p = fract(p*vec2(123.34, 456.21)); p += dot(p, p+45.32); return fract(p.x*p.y); }')
+      .replace('#include <color_fragment>', `
+        diffuseColor.rgb *= pow(vColor.rgb, vec3(2.2));
+        float wMask = 0.0; float wLit = 0.0;
+        vec3 fn = normalize(cross(dFdx(vWPos), dFdy(vWPos)));
+        if (vKind > 0.5 && vKind < 2.5 && abs(fn.y) < 0.35) {
+          bool tall = vKind > 1.5;
+          vec2 tg = normalize(vec2(-fn.z, fn.x));
+          float u = dot(vWPos.xz, tg); float v = vWPos.y;
+          float bay = tall ? 1.6 : 2.8; float flr = tall ? 3.9 : 3.3;
+          float uc = fract(u / bay); float vc = fract(v / flr);
+          float lu = tall ? 0.03 : 0.22; float hu = tall ? 0.97 : 0.78;
+          float lv = tall ? 0.04 : 0.30; float hv = tall ? 0.96 : 0.85;
+          wMask = step(lu, uc) * step(uc, hu) * step(lv, vc) * step(vc, hv);
+          vec3 glass = tall ? diffuseColor.rgb * 0.5 : vec3(0.02, 0.03, 0.04);
+          diffuseColor.rgb = mix(diffuseColor.rgb, glass, wMask);
+          wLit = wMask * step(0.82, hash21(vec2(floor(u / bay) + floor(vWPos.x * 0.37), floor(v / flr) + floor(vWPos.z * 0.37))));
+        }`)
+      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, 0.12, wMask);')
+      .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\nmetalnessFactor = mix(metalnessFactor, 0.55, wMask);')
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += wLit * uNight * vec3(1.0, 0.72, 0.42) * 2.2;');
+  };
+  return mat;
+}
+const M = {
+  terrain: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0 }),
+  water: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.12, metalness: 0.2, flatShading: true }),
+  roads: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0, flatShading: true,
+    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }),
+  buildings: windowed(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0, flatShading: true, side: THREE.DoubleSide })),
+};
+// vertex colours are stored as sRGB bytes: terrain/water/roads decode them with a tiny patch too
+for (const k of ['terrain', 'water', 'roads']) {
+  M[k].onBeforeCompile = (sh) => { sh.fragmentShader = sh.fragmentShader.replace('#include <color_fragment>', 'diffuseColor.rgb *= pow(vColor.rgb, vec3(2.2));'); };
+}
+// open sea beyond the tiles
+const sea = new THREE.Mesh(new THREE.PlaneGeometry(240000, 240000).rotateX(-Math.PI / 2),
+  new THREE.MeshStandardMaterial({ color: 0x0b2f44, roughness: 0.1, metalness: 0.1 }));
+sea.position.y = 0.6; sea.position.set(-4500, 0.6, 3500); scene.add(sea);
+
+// ---------------------------------------------------------------- trees (instanced per tile)
+const crownGeo = new THREE.IcosahedronGeometry(1, 1).scale(1, 0.55, 1).translate(0, 0.66, 0);
+const trunkGeo = new THREE.CylinderGeometry(0.035, 0.05, 0.42, 5).translate(0, 0.21, 0);
+var crownMat = new THREE.MeshStandardMaterial({ roughness: 0.9, flatShading: true });
+var trunkMat = new THREE.MeshStandardMaterial({ color: 0x4a3a2a, roughness: 1 });
+const TREE_COL = [new THREE.Color(0x3f6b2c), new THREE.Color(0x24472f), new THREE.Color(0x6f8f3a)];
+setHour(16.7);   // after every material it touches exists
+
+// ---------------------------------------------------------------- tile loading
+const tiles = new Map();           // id -> {group, info, layers:{}, trees:[], state}
+let manifest, totalTris = 0, loaded = 0, queue = [], active = 0;
+const root = new THREE.Group(); scene.add(root);
+const layerOn = { terrain: true, water: true, roads: true, buildings: true, trees: true };
+
+async function fetchGz(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(url + ' ' + r.status);
+  return await new Response(r.body.pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
+}
+function buildTile(rec, buf) {
+  const hl = new DataView(buf).getUint32(0, true);
+  const head = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 4, hl)));
+  const base = 4 + hl;
+  const g = new THREE.Group(); g.position.set(...rec.info.c);
+  for (const L of head.layers) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Int16Array(buf, base + L.pos, L.nv * 3), 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(new Uint8Array(buf, base + L.col, L.nv * 3), 3, true));
+    if (L.name === 'buildings') geo.setAttribute('kind', new THREE.BufferAttribute(new Uint8Array(buf, base + L.kind, L.nv), 1));
+    geo.setIndex(new THREE.BufferAttribute(L.idx === 'u16' ? new Uint16Array(buf, base + L.ind, L.ni) : new Uint32Array(buf, base + L.ind, L.ni), 1));
+    if (L.name === 'terrain') geo.computeVertexNormals();
+    geo.computeBoundingSphere();
+    const mesh = new THREE.Mesh(geo, M[L.name]);
+    mesh.scale.setScalar(0.05);
+    mesh.castShadow = L.name === 'buildings';
+    mesh.receiveShadow = L.name !== 'water';
+    mesh.visible = layerOn[L.name];
+    mesh.userData.layer = L.name;
+    g.add(mesh); rec.layers[L.name] = mesh;
+  }
+  if (head.trees) {
+    const T = head.trees, n = T.n;
+    const pos = new Float32Array(buf, base + T.pos, n * 3), scl = new Float32Array(buf, base + T.scale, n * 3), cls = new Uint8Array(buf, base + T.cls, n);
+    const crowns = new THREE.InstancedMesh(crownGeo, crownMat, n), trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, n);
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), s = new THREE.Vector3(), yaw = new THREE.Euler();
+    for (let i = 0; i < n; i++) {
+      const r = scl[i * 3], h = scl[i * 3 + 2];
+      yaw.set(0, (i * 2.399) % 6.283, 0); q.setFromEuler(yaw);
+      p.set(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]); s.set(r, h, r);
+      m.compose(p, q, s); crowns.setMatrixAt(i, m); trunks.setMatrixAt(i, m);
+      crowns.setColorAt(i, TREE_COL[Math.min(cls[i], 2)]);
+    }
+    crowns.castShadow = true; crowns.computeBoundingSphere(); trunks.computeBoundingSphere();
+    crowns.userData.layer = trunks.userData.layer = 'trees';
+    crowns.visible = trunks.visible = layerOn.trees;
+    g.add(crowns, trunks); rec.trees = [crowns, trunks];
+  }
+  rec.group = g; root.add(g); rec.state = 'ready';
+  loaded++; totalTris += rec.info.tris;
+  $('#load').style.transform = `scaleX(${loaded / manifest.tiles.length})`;
+  if (loaded === manifest.tiles.length) setTimeout(() => { $('#load').style.opacity = 0; }, 600);
+  applySplatVisibility();
+}
+function pump() {
+  while (active < 8 && queue.length) {
+    const rec = queue.shift(); active++;
+    fetchGz(`./data/tiles/${rec.info.id}.bin.gz`).then((b) => buildTile(rec, b)).catch((e) => console.warn(e)).finally(() => { active--; pump(); });
+  }
+}
+function enqueueByDistance() {
+  const f = controls.target;
+  queue = [...tiles.values()].filter((r) => r.state === 'new');
+  queue.sort((a, b) => Math.hypot(a.info.c[0] - f.x, a.info.c[2] - f.z) - Math.hypot(b.info.c[0] - f.x, b.info.c[2] - f.z));
+  pump();
+}
+const manifestP = fetch('./data/manifest.json').then((r) => r.json()).then((m) => {
+  manifest = m;
+  for (const t of m.tiles) tiles.set(t.id, { info: t, layers: {}, trees: [], state: 'new', group: null });
+  enqueueByDistance();
+});
+
+// ---------------------------------------------------------------- layers / splat visibility
+document.querySelectorAll('[data-layer]').forEach((el) => el.addEventListener('change', () => {
+  layerOn[el.dataset.layer] = el.checked;
+  for (const r of tiles.values()) { const m = r.layers[el.dataset.layer]; if (m) m.visible = el.checked; if (el.dataset.layer === 'trees') r.trees.forEach((t) => t.visible = el.checked); }
+  applySplatVisibility();
+}));
+$('#shadows').addEventListener('change', (e) => { sun.castShadow = e.target.checked; renderer.shadowMap.needsUpdate = true; });
+let splatViewer = null, splatOn = false;
+function applySplatVisibility() {
+  const hide = splatOn && $('#hideMesh').checked;
+  for (const r of tiles.values()) {
+    if (!r.group || !r.info.pilot) continue;
+    for (const k of Object.keys(r.layers)) r.layers[k].visible = layerOn[k] && !hide;
+    r.trees.forEach((t) => t.visible = layerOn.trees && !hide);
+  }
+}
+$('#hideMesh').addEventListener('change', applySplatVisibility);
+$('#btnSplat').addEventListener('click', async () => {
+  const b = $('#btnSplat');
+  if (!splatViewer) {
+    b.textContent = 'Loading splat…';
+    try {
+      const GS = await import('./vendor/gaussian-splats-3d.module.js');
+      splatViewer = new GS.DropInViewer({ gpuAcceleratedSort: false, sharedMemoryForWorkers: false, integerBasedSort: true });
+      await splatViewer.addSplatScene('./splat/sf_twin_pilot_web.splat', { rotation: [1, 0, 0, 0], showLoadingUI: false, progressiveLoad: false });
+      scene.add(splatViewer);
+    } catch (e) { console.error(e); b.textContent = 'Splat failed (see console)'; $('#splatInfo').textContent = String(e).slice(0, 160); splatViewer = null; return; }
+    splatOn = true;
+  } else { splatOn = !splatOn; splatViewer.visible = splatOn; }
+  b.textContent = splatOn ? 'Hide Gaussian splat' : 'Show Gaussian splat'; b.classList.toggle('on', splatOn);
+  applySplatVisibility();
+  if (splatOn) { flyTo(new THREE.Vector3(-700, 320, 700), new THREE.Vector3(-480, 40, 480), 1.6); }
+});
+
+// ---------------------------------------------------------------- camera presets and tweening
+let tween = null;
+function flyTo(eye, target, secs = 1.8) {
+  tween = { t: 0, secs, e0: camera.position.clone(), t0: controls.target.clone(), e1: eye.clone(), t1: target.clone() };
+}
+const VIEWS = {
+  'Overview': [[-1250, 260, 1450], [-300, 20, 250]],
+  'Financial District': [[-420, 330, 1000], [-470, 90, 520]],
+  'Market St': [[-960, 26, 958], [-150, 18, 120]],
+  'Golden Gate': [[-6900, 110, -1500], [-7700, 120, -2900]],
+  'Twin Peaks': [[-4738, 300, 4589], [-700, 120, 500]],
+  'Whole city': [[6350, 15400, 18560], [-3500, 0, 1500]],
+};
+for (const [name, [e, t]] of Object.entries(VIEWS)) {
+  const b = document.createElement('button'); b.textContent = name;
+  b.onclick = () => { stopFlights(); flyTo(new THREE.Vector3(...e), new THREE.Vector3(...t)); }; $('#views').appendChild(b);
+}
+
+// ---------------------------------------------------------------- flythroughs: drone (Blender keys) and car chase cam
+let paths = null, flight = null;
+const carMesh = (() => {
+  const g = new THREE.Group();
+  const paint = new THREE.MeshStandardMaterial({ color: 0xa01418, roughness: 0.3, metalness: 0.4 });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(4.8, 0.75, 1.9), paint); body.position.y = 0.7; body.castShadow = true;
+  const cab = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.55, 1.7), new THREE.MeshStandardMaterial({ color: 0x0a1018, roughness: 0.1, metalness: 0.6 })); cab.position.set(-0.3, 1.25, 0); cab.castShadow = true;
+  g.add(body, cab);
+  for (const x of [-1.5, 1.5]) for (const z of [-0.9, 0.9]) { const w = new THREE.Mesh(new THREE.CylinderGeometry(0.33, 0.33, 0.25, 12).rotateX(Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x111111 })); w.position.set(x, 0.33, z); g.add(w); }
+  g.visible = false; scene.add(g); return g;
+})();
+function stopFlights() { flight = null; carMesh.visible = false; controls.enabled = true; $('#btnDrone').classList.remove('on'); $('#btnCar').classList.remove('on'); }
+async function startFlight(kind) {
+  if (flight && flight.kind === kind) { stopFlights(); return; }
+  stopFlights();
+  if (!paths) paths = await fetch('./data/paths.json').then((r) => r.json());
+  controls.enabled = false; tween = null;
+  flight = { kind, t: 0 };
+  (kind === 'drone' ? $('#btnDrone') : $('#btnCar')).classList.add('on');
+  if (kind === 'car') { carMesh.visible = true; note('Car route: Kearny → Geary → Market → Steuart (2.2 km, 3 min at 12 m/s). The pilot tiles stream in as you drive.'); }
+}
+$('#btnDrone').onclick = () => startFlight('drone');
+$('#btnCar').onclick = () => startFlight('car');
+const tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3();
+function stepFlight(dt) {
+  flight.t += dt;
+  if (flight.kind === 'drone') {
+    const D = paths.drone, T = D.t, t = Math.min(flight.t, T[T.length - 1]);
+    let i = 0; while (i < T.length - 2 && T[i + 1] < t) i++;
+    const f = (t - T[i]) / (T[i + 1] - T[i] || 1);
+    tmpA.fromArray(D.eye[i]).lerp(tmpB.fromArray(D.eye[i + 1]), f);
+    camera.position.copy(tmpA);
+    tmpA.fromArray(D.look[i]).lerp(tmpB.fromArray(D.look[i + 1]), f); camera.lookAt(tmpA); controls.target.copy(tmpA);
+    if (flight.t > T[T.length - 1]) stopFlights();
+  } else {
+    const C = paths.car, n = C.xz.length, s = Math.min(flight.t * 12 / C.step, n - 2);
+    const at = (u, out) => { const k = Math.max(0, Math.min(n - 2, Math.floor(u))), f = Math.max(0, Math.min(1, u - k));
+      return out.set(C.xz[k][0] + (C.xz[k + 1][0] - C.xz[k][0]) * f, C.y[k] + (C.y[k + 1] - C.y[k]) * f, C.xz[k][1] + (C.xz[k + 1][1] - C.xz[k][1]) * f); };
+    const p = at(s, new THREE.Vector3()), p2 = at(s + 1.5, new THREE.Vector3()), back = at(s - 4.5, new THREE.Vector3()), look = at(s + 3, new THREE.Vector3());
+    carMesh.position.copy(p); carMesh.rotation.y = Math.atan2(-(p2.z - p.z), p2.x - p.x);
+    camera.position.copy(back).add(tmpA.set(0, 2.9, 0)); camera.lookAt(look.add(tmpB.set(0, 1.3, 0))); controls.target.copy(look);
+    if (s >= n - 2) stopFlights();
+  }
+}
+
+// ---------------------------------------------------------------- Blender render gallery + wipe compare
+const RENDERS = [
+  { id: 'market', title: 'Market St hero · Cycles vs EEVEE', eevee: './renders/market_eevee.jpg', cycles: './renders/market_cycles.jpg',
+    eye: [-960, 26, 958], target: [-150, 18, 120], hfov: 58.7, aspect: 16 / 9 },
+  { id: 'aerial', title: 'Whole city aerial · EEVEE 8K', eevee: './renders/city_aerial_eevee.jpg', eye: [6350, 15400, 18560], target: [-3500, 0, 1500], hfov: 54, aspect: 16 / 9 },
+  { id: 'top', title: 'Whole city top-down · EEVEE 8K', eevee: './renders/city_topdown_eevee.jpg', eye: [-4500, 17500, 3500], target: [-4500, 0, 3499], hfov: 60, aspect: 16 / 9 },
+];
+const sel = $('#renderSel'); RENDERS.forEach((r, i) => sel.add(new Option(r.title, i)));
+const ov = $('#ov'), ovTop = $('#ovTop'), bottom = $('#ovBottom'), div = $('#divider'), wipe = $('#wipe');
+let cmp = 'live', matchCam = null;
+function cur() { return RENDERS[+sel.value]; }
+function buildCmp() {
+  const row = $('#cmpRow'); row.innerHTML = '';
+  const opts = [['live', 'Live only']];
+  if (cur().eevee) opts.push(['eevee', 'Live | EEVEE']);
+  if (cur().cycles) opts.push(['cycles', 'Live | Cycles']);
+  if (cur().eevee && cur().cycles) opts.push(['both', 'EEVEE | Cycles']);
+  for (const [k, label] of opts) { const b = document.createElement('button'); b.textContent = label; b.className = k === cmp ? 'on' : ''; b.onclick = () => { cmp = k; buildCmp(); applyCmp(); }; row.appendChild(b); }
+}
+function applyCmp() {
+  const r = cur(); const show = cmp !== 'live';
+  ov.style.display = div.style.display = wipe.style.display = show ? 'block' : 'none';
+  if (!show) { matchCam = null; return; }
+  if (cmp === 'eevee') { ovTop.src = r.eevee; bottom.style.display = 'none'; }
+  if (cmp === 'cycles') { ovTop.src = r.cycles; bottom.style.display = 'none'; }
+  if (cmp === 'both') { ovTop.src = r.cycles; bottom.src = r.eevee; bottom.style.display = 'block'; }
+  matchCam = r; setWipe(+wipe.value); resize();
+  $('#cmpHint').textContent = cmp === 'both' ? 'Left: EEVEE render · right: Cycles render (same camera, same scene).' : 'Left: live WebGL · right: the Blender render from the same camera. Lighting differs: the live view uses real-time shadows, the renders are path-traced / ray-traced with textures and props.';
+}
+function setWipe(p) { ovTop.style.clipPath = `inset(0 0 0 ${p}%)`; div.style.left = p + '%'; }
+wipe.addEventListener('input', (e) => setWipe(+e.target.value));
+sel.addEventListener('change', () => { buildCmp(); applyCmp(); });
+$('#btnGo').onclick = () => { stopFlights(); const r = cur(); flyTo(new THREE.Vector3(...r.eye), new THREE.Vector3(...r.target), 1.4); matchCam = r; resize(); };
+buildCmp();
+
+// ---------------------------------------------------------------- input: WASD / QE fly
+const keys = new Set();
+addEventListener('keydown', (e) => { if (e.target.tagName !== 'INPUT') keys.add(e.code); });
+addEventListener('keyup', (e) => keys.delete(e.code));
+function flyKeys(dt) {
+  if (!keys.size || flight) return;
+  const h = Math.max(20, camera.position.y), sp = h * 1.2 * dt;
+  const f = tmpA.set(0, 0, -1).applyQuaternion(camera.quaternion).setY(0).normalize(), r = tmpB.set(1, 0, 0).applyQuaternion(camera.quaternion).setY(0).normalize();
+  const d = new THREE.Vector3();
+  if (keys.has('KeyW')) d.add(f); if (keys.has('KeyS')) d.sub(f); if (keys.has('KeyD')) d.add(r); if (keys.has('KeyA')) d.sub(r);
+  if (keys.has('KeyE')) d.y += 1; if (keys.has('KeyQ')) d.y -= 1;
+  d.multiplyScalar(sp); camera.position.add(d); controls.target.add(d);
+}
+
+// ---------------------------------------------------------------- loop
+function note(t) { const n = $('#note'); n.textContent = t; n.style.display = 'block'; clearTimeout(note.h); note.h = setTimeout(() => n.style.display = 'none', 6000); }
+function resize() {
+  renderer.setSize(innerWidth, innerHeight, false);
+  camera.aspect = innerWidth / innerHeight;
+  camera.fov = matchCam ? THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(matchCam.hfov) / 2) / camera.aspect)) : 50;
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize); resize();
+const clock = new THREE.Clock(); let fpsN = 0, fpsT = 0, lastVis = 0, lastShadow = new THREE.Vector3(1e9, 0, 0);
+function loop() {
+  const dt = Math.min(clock.getDelta(), 0.1);
+  if (tween) {
+    tween.t += dt / tween.secs; const k = Math.min(1, tween.t), e = k * k * (3 - 2 * k);
+    camera.position.lerpVectors(tween.e0, tween.e1, e); controls.target.lerpVectors(tween.t0, tween.t1, e);
+    if (k >= 1) tween = null;
+  }
+  flyKeys(dt);
+  if (flight) stepFlight(dt); else controls.update();
+  // near/far scale with height so roads 0.1 m above terrain do not z-fight from the air
+  const h = Math.max(2, camera.position.y);
+  camera.near = Math.min(400, Math.max(0.6, h * 0.004)); camera.far = 60000; camera.updateProjectionMatrix();
+  // shadow frustum follows the view target (snapped to avoid shimmering)
+  const t = controls.target;
+  if (lastShadow.distanceTo(t) > 40) {
+    lastShadow.copy(t);
+    sun.target.position.set(Math.round(t.x / 20) * 20, 0, Math.round(t.z / 20) * 20);
+    sun.position.copy(sun.target.position).addScaledVector(sunDir, 1800);
+    sun.target.updateMatrixWorld();
+  }
+  // distance culling of heavy layers
+  lastVis += dt;
+  if (lastVis > 0.5) {
+    lastVis = 0;
+    for (const r of tiles.values()) {
+      if (!r.group) continue;
+      const d = Math.hypot(r.info.c[0] - camera.position.x, r.info.c[2] - camera.position.z);
+      const b = r.layers.buildings; if (b && layerOn.buildings && !(splatOn && r.info.pilot && $('#hideMesh').checked)) b.visible = d < 14000;
+      if (layerOn.trees && !(splatOn && r.info.pilot && $('#hideMesh').checked)) r.trees.forEach((x) => x.visible = d < 2600);
+    }
+  }
+  renderer.render(scene, camera);
+  fpsN++; fpsT += dt;
+  if (fpsT > 0.5) { $('#hud').textContent = `${Math.round(fpsN / fpsT)} fps · ${loaded}/${manifest ? manifest.tiles.length : '…'} tiles · ${(totalTris / 1e6).toFixed(1)}M tris`; fpsN = 0; fpsT = 0; }
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>

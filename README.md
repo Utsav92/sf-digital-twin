@@ -100,6 +100,59 @@ golden|day|dusk|night [--wet 0.8] [--dof 150,4] [--lamp-lights 400]`.
 - **Trees:** lobed, noise-displaced crowns, tiered conifers and frond palms (LOD1); cheap silhouettes
   (LOD0).
 
+## Cinematic pipeline (Cycles path tracing, 8K PBR, street + facade detail, drone/drive)
+`./src/blender/render_cinematic.sh preview|final|anim` (see the header of the script). Pilot district only for
+now: the detail layer and new props are built for the 16 pilot tiles (`mesh_tiles.py --layers details,props --pilot`).
+- **Engines:** EEVEE for fast previews (64 samples), Cycles path tracing for finals (`--engine CYCLES --samples
+  128..256`), Metal GPU only (`set_engine` enables just the METAL device), OpenImageDenoise, adaptive sampling,
+  AgX colour management, 3840x2160. Measured on the M5 Pro: one 4K frame at 128 samples takes about 4 minutes.
+- **Textures:** CC0 Poly Haven photoscanned sets: asphalt, concrete, brick, plaster, metal (with metalness map) and
+  wood at 2K/4K/8K. `SF_TEX_RES=4k|8k` repoints the shared material library at `sf_materials_<res>.blend` (build it
+  with `SF_TEX_RES=8k blender -b -P src/blender/build_material_library.py`); the default stays 2K so city-wide
+  renders fit in memory. Scale is set by metre-scale UVs (props use object-space projection). Glass is procedural.
+- **Lighting:** physical sun + sky HDRI, soft area fill and warm kicker (`--area`), real point lights on nearby
+  street lamps, a local volumetric fog box with forward scattering for god rays (`--atmo density`), compositor
+  grade (bloom, lens dispersion, lift/gain, S-curve, vignette, grain). `--fog` scales the mist-pass haze.
+- **Street detail** (`geom/details.py`, LOD1): curbs, double-yellow / dashed lane markings, parking-edge lines,
+  zebra crosswalks at junctions. **Facades:** plinth, cornice and parapet rings, balconies with railings and window
+  sills, placed on the facade shader's window grid so they line up with the glass.
+- **Props** (`geom/props.py`, `props_instancing.py`): traffic signals with mast arms, fire hydrants, benches, bins,
+  pedestrians (6 outfits), on sidewalk polygons only, plus the existing lamps, cars and trees.
+- **Camera:** `--anim drone|drive --seconds N` flies or drives down Market St (ground height sampled from the scene).
+  Frames go through the same path as stills into `renders/cinematic/<name>/frame_NNNN.png`, then
+  `encode_video.py` makes an H.264 mp4 with Blender's built-in FFmpeg.
+- **Not done:** window recesses (windows are shader-based), photogrammetry-scanned street props (Poly Haven has no
+  hydrant/bench scans), a rigged driving car in frame, and the detail layer outside the pilot area.
+
+### 3-minute split-screen film and 8K stills (`src/cine/`)
+- `make_route.py` builds the hero-car route (2.2 km along Kearny, Geary, Market and Steuart streets, a graph walk
+  over real OSM ways) and the tallest-tower cluster for the drone orbit. `props.py` keeps instanced traffic off the route.
+- `cameras.add_cine_car`: red hero car driven along the route (eased start/stop, pitch from the road, ground height
+  ray-cast), GTA-style chase camera 9 m behind / 2.9 m up. `cameras.add_cine_drone`: waterfront approach, descending
+  orbit of the tower cluster, flight down the Market St canyon, climbing pull-back over the bay; every key is pushed
+  out of geometry by ray-cast clearance (cached in `data/processed/cine_drone_keys_180.json`).
+- `./src/cine/render_film.sh`: 4320 frames per view (960x1080, EEVEE 64 samples, 4K textures, volumetric fog, area
+  lights, motion blur), resumable, then `compose_film.py` joins them into `renders/film/sf_twin_film.mp4`
+  (1920x1080 split screen with labels). Run `render_film.sh compose` any time to cut what exists so far.
+- `./src/cine/render_8k.sh`: 7680x4320 stills: whole-city aerial and top-down (EEVEE) and a Cycles path-traced
+  pilot hero shot with 8K textures. Full 8K Cycles animation is not practical on this machine (hours per frame).
+- Shell note: run these from bash scripts. In zsh, an unquoted `$VAR` holding several flags is NOT word-split, which
+  silently renders with default settings.
+
+### Web viewer (three.js): whole city + Gaussian splat + Blender renders (`web/`)
+`./web/serve.sh` then open http://localhost:8000/ (browsers block `fetch()` from `file://`). All libraries are vendored
+in `web/vendor` (three r160, OrbitControls, Sky, GaussianSplats3D 0.4.6), so it works offline.
+- **City:** `src/web/export_city.py` writes all 618 LOD0 tiles (7.45M triangles, 54 MB gzipped) to `web/data/tiles/`:
+  int16 positions, vertex colours from the land-use/road/facade palettes, instanced trees. Tiles stream in nearest-first.
+  Buildings get procedural windows in the shader (same bay/floor grid as the Blender facade material) and lit windows at
+  night. Sun/sky/fog/AgX tone mapping, real-time shadows, time-of-day slider.
+- **Splat:** `web/splat/sf_twin_pilot_web.splat` (4.55M Gaussians, 146 MB; built with
+  `build_splat.py data/splat <out> 2.4 0.8 1.2`). "Load Gaussian splat" streams it in and hides the mesh under it.
+- **Cycles / EEVEE:** a web page cannot run either engine. The viewer overlays the real Blender renders
+  (`web/renders/*.jpg`: Cycles 8K and EEVEE of the same Market St camera, EEVEE whole-city aerial/top-down) on the live view
+  with a wipe slider, and "Go to render camera" puts the live camera at the render's pose.
+- **Flythroughs:** the Blender drone keyframes and the hero-car route play in the live view (`data/paths.json`).
+
 ## Unreal export (Phase 11, done for the pilot)
 - `out/unreal/tiles/<id>/<id>.usdc`: LOD1 per tile, triangulated (Nanite-friendly), metre UVs (wall UV =
   metres along the facade x height), UsdPreviewSurface materials named 1:1 after Unreal master materials

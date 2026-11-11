@@ -10,6 +10,7 @@ blender -b --factory-startup -P src/blender/export_unreal.py -- --tiles a,b [--l
 Outputs out/unreal/tiles/<id>/<id>.usdc and out/unreal/landmarks/<asset>.usdc
 """
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -32,6 +33,8 @@ def canonical_materials():
             src = m.get("sf_material", m.name)
             tgt = MAP.get(src, "MAT_" + src.title().replace("_", ""))
             if tgt not in canon:
+                if m.library is not None:  # linked from sf_materials.blend: name is read-only, use a local copy
+                    m = m.copy()
                 m.name = tgt
                 canon[tgt] = m
             me.materials[i] = canon[tgt]
@@ -84,16 +87,32 @@ def export_objects(objs, path, root):
                           export_animation=False, meters_per_unit=1.0)
 
 
+def share_textures(tex_dir):
+    """USD export copies every texture next to each file; keep one shared copy in out/unreal/textures and symlink to it."""
+    import shutil
+    tex_dir = Path(tex_dir)
+    if not tex_dir.is_dir() or tex_dir.is_symlink():
+        return
+    shared = OUT / "textures"
+    shared.mkdir(parents=True, exist_ok=True)
+    for f in tex_dir.iterdir():
+        if not (shared / f.name).exists():
+            shutil.move(str(f), shared / f.name)
+    shutil.rmtree(tex_dir)
+    tex_dir.symlink_to(os.path.relpath(shared, tex_dir.parent))
+
+
 def export_tile(tile):
     bpy.ops.wm.open_mainfile(filepath=str(ROOT / "out/tiles" / tile["id"] / f"{tile['id']}.blend"))
     canonical_materials()
     top = bpy.data.collections[f"tile_{tile['name']}_LOD1"]
-    objs = [o for o in top.all_objects if o.type == "MESH" and o.get("layer") != "trees"]
+    objs = [o for o in top.all_objects if o.type == "MESH" and o.get("layer") not in ("trees", "props")]  # props (cars, lamps) are PCG/instance data, not tile mesh
     for o in objs:
         corner_colors(o.data, o.get("layer"))
         o["tile_id"], o["sf_layer"] = tile["id"], o.get("layer")
     p = OUT / "tiles" / tile["id"] / f"{tile['id']}.usdc"
     export_objects(objs, p, f"/Tile_{tile['name'].replace('-', 'm')}")
+    share_textures(p.parent / "textures")
     print(f"USD {tile['id']} objects={len(objs)} -> {p.relative_to(ROOT)}", flush=True)
 
 
@@ -112,6 +131,7 @@ def export_landmarks():
         canonical_materials()
         p = OUT / "landmarks" / f"SM_Landmark_{name}.usdc"
         export_objects([ob], p, f"/SM_Landmark_{name}")
+        share_textures(p.parent / "textures")
         print(f"USD landmark {name} -> {p.relative_to(ROOT)}", flush=True)
 
 

@@ -86,7 +86,9 @@ def _from_library(name):
     """Link `name` from the shared material library (out/city/sf_materials.blend) if it exists."""
     global MATLIB
     from bpy_common import ROOT
-    lib = ROOT / "out/city/sf_materials.blend"
+    import os
+    lib = ROOT / (f"out/city/sf_materials_{os.environ['SF_TEX_RES']}.blend"
+                  if os.environ.get("SF_TEX_RES") in ("4k", "8k") else "out/city/sf_materials.blend")
     if not lib.exists():
         return None
     with bpy.data.libraries.load(str(lib), link=True, relative=True) as (src, dst):
@@ -463,3 +465,28 @@ for _i, _c in enumerate(PAINTS):
     SPECIAL[f"car_paint_{_i}"] = (lambda c: (lambda n: paint_mat(n, c)))(_c)
 SLOTS["props"] = ["lamp_pole", "lamp_glow", "car_glass", "car_tire", "headlight", "taillight"] + \
     [f"car_paint_{i}" for i in range(len(PAINTS))]
+
+
+# ---------------------------------------------------------------- street/facade details, extra props
+LIB.update({
+    "marking_white": ((0.80, 0.80, 0.77), 0.55, 0.0, 0.6, 0.25),
+    "marking_yellow": ((0.86, 0.62, 0.06), 0.55, 0.0, 0.6, 0.25),
+    "hydrant_red": ((0.60, 0.04, 0.03), 0.35, 0.3, 0.0, 0.0),
+    "bin_green": ((0.07, 0.17, 0.11), 0.45, 0.4, 0.0, 0.0),
+    "ped_skin": ((0.55, 0.38, 0.28), 0.6, 0.0, 0.0, 0.0),
+    "ped_pants": ((0.10, 0.11, 0.16), 0.8, 0.0, 0.0, 0.0),
+})
+PED_CLOTH = [(0.55, 0.08, 0.07), (0.10, 0.20, 0.45), (0.80, 0.78, 0.70), (0.15, 0.35, 0.22), (0.85, 0.55, 0.10),
+             (0.20, 0.20, 0.22)]
+for _i, _c in enumerate(PED_CLOTH):
+    LIB[f"ped_cloth_{_i}"] = (_c, 0.8, 0.0, 0.0, 0.0)
+SPECIAL.update({
+    "signal_red": lambda n: night_emitter(n, (1.0, 0.05, 0.03), 8.0, base=(0.4, 0.02, 0.02), day_strength=4.0),
+    "signal_green": lambda n: night_emitter(n, (0.1, 1.0, 0.35), 8.0, base=(0.02, 0.3, 0.1), day_strength=4.0),
+})
+SLOTS["details"] = ["curb", "marking_white", "marking_yellow", "crosswalk", "bldg_trim", "balcony_slab",
+                    "railing_metal", "sill"]
+LIB.update({"crosswalk": LIB["marking_white"]})
+SLOTS["props"] = SLOTS["props"] + ["hydrant_red", "bin_green", "wood_bench", "metal_steel", "metal_signal",
+                                   "signal_red", "signal_green", "ped_skin", "ped_pants"] + \
+    [f"ped_cloth_{i}" for i in range(len(PED_CLOTH))]

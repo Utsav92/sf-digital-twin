@@ -165,8 +165,8 @@ def set_engine(scn, engine: str = "EEVEE", samples: int = 32) -> str:
         prefs = bpy.context.preferences.addons["cycles"].preferences
         prefs.compute_device_type = "METAL"
         prefs.get_devices()
-        for d in prefs.devices:
-            d.use = True
+        for d in prefs.devices:  # Metal GPU compute only (Preferences > System > Cycles Render Devices)
+            d.use = d.type == "METAL"
         scn.cycles.device = "GPU"
         scn.cycles.samples = samples
     elif "EEVEE" in scn.render.engine:

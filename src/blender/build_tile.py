@@ -22,7 +22,7 @@ PROC = ROOT / "data/processed"
 OUT = ROOT / "out/tiles"
 # npz layer name -> (collection layer name, material slot set)
 LAYERS = {"terrain": "Terrain", "water": "Water", "roads": "Roads", "rail": "Rail", "buildings": "Buildings",
-          "trees": "Trees", "landmarks": "Landmarks"}
+          "trees": "Trees", "landmarks": "Landmarks", "details": "Details"}
 
 
 def collection(name, parent):
@@ -44,7 +44,7 @@ def build_mesh_layer(layer, lod, tile, parent, rep):
     coll = collection(cname, parent)
     coll["tile_id"] = tile["id"]
     coll["lod"] = lod
-    me = mesh_from_npz(f"{layer}_{tile['name']}_{lod}", d, flat=layer in ("buildings", "landmarks"))
+    me = mesh_from_npz(f"{layer}_{tile['name']}_{lod}", d, flat=layer in ("buildings", "landmarks", "details"))
     slot_layer = "roads" if layer == "landmarks" else layer
     if layer == "landmarks":
         names = json.loads(str(d["meta"]))["materials"]

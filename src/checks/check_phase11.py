@@ -69,7 +69,7 @@ for k, t in tiles.items():
     unknown |= mats - MATS
     # source bounds from the LOD1 npz layers that were exported
     src = []
-    for layer in ("terrain", "water", "roads", "rail", "buildings", "landmarks"):
+    for layer in ("terrain", "water", "roads", "rail", "buildings", "landmarks", "details"):
         f = PROC / "tiles" / k / f"mesh_{layer}_lod1.npz"
         if f.exists():
             v = np.load(f)["verts"]

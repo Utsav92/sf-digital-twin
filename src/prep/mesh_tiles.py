@@ -21,7 +21,7 @@ from geom import meshio, terrain  # noqa: E402
 from prep.prep_tiles import select_tiles  # noqa: E402
 
 PROC = crs.ROOT / "data/processed"
-ALL = ["terrain", "water", "roads", "rail", "buildings", "trees", "props"]  # land use lives in terrain (f_cls)
+ALL = ["terrain", "water", "roads", "rail", "buildings", "trees", "props", "details"]  # land use lives in terrain (f_cls)
 
 
 class Ctx:

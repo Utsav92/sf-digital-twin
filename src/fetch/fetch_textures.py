@@ -24,8 +24,12 @@ SETS = {  # role: (poly haven id, real-world size of one texture repeat in metre
     "forest": ("forrest_ground_01", 5.0),
     "roof_tiles": ("clay_roof_tiles_02", 3.0),
     "gravel": ("gravel_road", 4.0),
+    "metal": ("metal_plate", 2.0),            # lamp poles, signal poles, railings, bridge steel
+    "wood": ("wood_planks_grey", 2.0),        # pier decks, benches
 }
+HERO_4K = {"asphalt", "concrete", "brick", "plaster", "metal", "wood"}  # also fetched at 4K (hero renders)
 MAPS = {"diff": "Diffuse", "rough": "Rough", "nor": "nor_gl"}
+METAL_MAP = {"metal": ("metal", "Metal")}  # role -> (short, Poly Haven key): extra metalness map
 HDRIS = {  # lighting preset -> Poly Haven sky-only HDRI (CC0), used for camera + reflection rays
     "golden_hour": "belfast_sunset_puresky",
     "midday": "kloofendal_48d_partly_cloudy_puresky",
@@ -40,12 +44,19 @@ def main():
     for role, (pid, size) in SETS.items():
         files = requests.get(f"https://api.polyhaven.com/files/{pid}", timeout=30).json()
         rec = {"id": pid, "size_m": size, "maps": {}}
-        for short, key in MAPS.items():
-            url = files[key]["2k"]["jpg"]["url"]
-            p = OUT / pid / f"{pid}_{short}_2k.jpg"
-            if not p.exists():
-                download(url, p)
-            rec["maps"][short] = str(p.relative_to(crs.ROOT))
+        for res, field, roles in (("2k", "maps", None), ("4k", "maps4k", HERO_4K), ("8k", "maps8k", HERO_4K)):
+            if roles is not None and role not in roles:
+                continue
+            rec[field] = {}
+            items = dict(MAPS)
+            if role in METAL_MAP:
+                items["metal"] = METAL_MAP[role][1]
+            for short, key in items.items():
+                url = files[key][res]["jpg"]["url"]
+                p = OUT / pid / f"{pid}_{short}_{res}.jpg"
+                if not p.exists():
+                    download(url, p)
+                rec[field][short] = str(p.relative_to(crs.ROOT))
         man["sets"][role] = rec
         log(f"  texture {role}: {pid}")
     man["hdri"] = {}

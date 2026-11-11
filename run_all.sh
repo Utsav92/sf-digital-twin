@@ -42,15 +42,15 @@ if has 3; then log "phase 3: prep (OSM, DEM, boundary, buildings, trees, bridges
   $PY src/prep/prep_water.py
   $PY src/prep/prep_bridges.py
   $PY src/prep/mesh_ocean.py
-  $PY src/prep/prep_tiles.py "${SEL[@]}" $FORCE
-  $PY src/checks/check_phase3.py "${CHK[@]}"; fi
+  $PY src/prep/prep_tiles.py ${SEL[@]+"${SEL[@]}"} $FORCE
+  $PY src/checks/check_phase3.py ${CHK[@]+"${CHK[@]}"}; fi
 if has 4 || has 5 || has 6 || has 7 || has 8; then log "phases 4-8: per-tile meshes"
-  $PY src/prep/mesh_tiles.py "${SEL[@]}" $FORCE; fi
+  $PY src/prep/mesh_tiles.py ${SEL[@]+"${SEL[@]}"} $FORCE; fi
 if has 9; then log "phase 9: landmarks"
   $PY src/geom/landmarks.py
-  $PY src/prep/mesh_tiles.py --layers buildings --force "${SEL[@]}"; fi
+  $PY src/prep/mesh_tiles.py --layers buildings --force ${SEL[@]+"${SEL[@]}"}; fi
 if has 4 || has 5 || has 6 || has 7 || has 8 || has 9 || has 10; then log "build tile .blend files"
-  $PY src/blender/build_tiles.py "${SEL[@]}" $FORCE; fi
+  $PY src/blender/build_tiles.py ${SEL[@]+"${SEL[@]}"} $FORCE; fi
 if [[ $PILOT == 0 && -z "$TILES" ]]; then
   for c in 4 5 6 7 9; do has $c && $PY src/checks/check_phase$c.py; done
 fi
@@ -64,7 +64,7 @@ import json,sys; sys.path.insert(0,'src'); from prep.prep_tiles import select_ti
 idx=json.load(open('data/processed/tile_index.json'))
 print(','.join(t['id'] for t in select_tiles(idx, $PILOT==1, '${TILES}' or None)))")
   B src/blender/export_unreal.py -- --tiles "$IDS" --landmarks > logs/phase11_export.log 2>&1
-  $PY src/prep/export_manifest.py "${SEL[@]}"
+  $PY src/prep/export_manifest.py ${SEL[@]+"${SEL[@]}"}
   $PY src/checks/check_phase11.py
   B src/blender/assemble_master.py > logs/phase11_master.log 2>&1; fi
 if has 12; then log "phase 12: city-wide validation renders"

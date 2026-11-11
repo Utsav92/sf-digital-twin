@@ -1,0 +1,7 @@
+This is the San Francisco digital twin, built in Unreal Engine five point eight. Real terrain from USGS three D E P, streets and buildings from Open Street Map and Data S F, projected into UTM zone ten and cut into six hundred eighteen tiles.
+Every building is Nanite geometry. A detail layer adds cornices, balconies, window sills and railings, about ninety million extra triangles, and two hundred eight thousand trees are placed from the survey data.
+Lumen provides dynamic global illumination and reflections, so light bounces between the towers, and Virtual Shadow Maps keep shadows crisp from skyscraper to curb.
+At street level, curbs, lane markings and crosswalks come straight from the road data, and every tile matches its source geometry to one centimetre.
+World Partition streams the whole city, and from the bay you see it all in one scene, with Temporal Super Resolution reconstructing a clean image.
+Cinematic cameras use real film back, focal length and aperture, with photo mode and look presets for the final grade.
+San Francisco, at city scale, in Unreal Engine.

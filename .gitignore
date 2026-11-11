@@ -9,3 +9,17 @@ __pycache__/
 *.blend1
 *.usdc
 .DS_Store
+
+# Unreal project: keep Source/Config/Tools/Documentation/uproject; drop build output and imported content (rebuild via Tools/*.py)
+SF_DigitalTwin/Content/
+SF_DigitalTwin/Intermediate/
+SF_DigitalTwin/Saved/
+SF_DigitalTwin/DerivedDataCache/
+SF_DigitalTwin/Binaries/
+# generated web data / splats
+web/data/
+web/data_hd/
+web/splat/
+web/renders/
+*.bak*
+*.mp4

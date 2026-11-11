@@ -18,6 +18,9 @@ from geom import roadclass as rc
 from geom import roads as R
 
 PROTO = {"lamp": 0, "sedan": 1, "suv": 2, "van": 3}
+# kinds: 0 lamp, 1 car, 2 hydrant, 3 bench, 4 bin, 5 traffic signal, 6 pedestrian
+# absolute prototype indices (props_instancing.protos order): 25 hydrant, 26 bench, 27 bin, 28 signal, 29-34 pedestrians
+P_HYDRANT, P_BENCH, P_BIN, P_SIGNAL, P_PED0, N_PED = 25, 26, 27, 28, 29, 6
 N_PAINT = 8  # car prototypes = 3 body types x 8 paints (colour baked per proto: robust under nested instancing)
 SPACING = {rc.MOTORWAY: 40.0, rc.ARTERIAL: 55.0, rc.LOCAL: 110.0}
 
@@ -49,6 +52,21 @@ def build(ctx) -> dict:
     wb = (bx0 + ctx.ox, by0 + ctx.oy, bx1 + ctx.ox, by1 + ctx.oy)
     sub = roads.iloc[G["roads_sidx"].query(shapely.box(*wb), predicate="intersects")]
     pts, kind, cls, rot, paint, moving = [], [], [], [], [], []
+    ends = {}
+    for row in sub.itertuples():
+        c0 = shapely.get_coordinates(row.geometry)
+        for e in (c0[0], c0[-1]):
+            k_ = (round(e[0] / 0.5), round(e[1] / 0.5))
+            ends[k_] = ends.get(k_, 0) + 1
+
+    def push(q, yaw, kd, cl):
+        pts.append(q)
+        kind.extend([kd] * len(q))
+        cls.extend(list(cl) if hasattr(cl, "__len__") else [cl] * len(q))
+        rot.append(yaw)
+        paint.append(np.zeros(len(q)))
+        moving.extend([0] * len(q))
+
     for row in sub.itertuples():
         c = row.cls
         if c not in (rc.MOTORWAY, rc.ARTERIAL, rc.LOCAL):
@@ -69,6 +87,49 @@ def build(ctx) -> dict:
             rot.append(yaw)
             paint.append(np.zeros(len(q)))
             moving += [0] * len(q)
+        if row.sw:  # sidewalk furniture + pedestrians
+            for step, start, salt, off, p_cls, occ in ((70.0, 20.0, 40, 0.5, P_HYDRANT, 0.45),
+                                                       (60.0, 15.0, 50, 1.9, P_BENCH, 0.18 if c == rc.ARTERIAL else 0.05),
+                                                       (45.0, 10.0, 60, 1.35, P_BIN, 0.3 if c == rc.ARTERIAL else 0.1)):
+                ss, p, t = _along(g, step, start)
+                if not len(ss):
+                    continue
+                k = np.arange(len(ss))
+                keep = _h(wid, k, salt) < occ
+                n = np.c_[-t[:, 1], t[:, 0]]
+                side = np.where(_h(wid, k, salt + 1) < 0.5, 1.0, -1.0)
+                q = (p + n * (side * (hw + off))[:, None])[keep]
+                yaw = np.arctan2(-n[:, 1] * side, -n[:, 0] * side)[keep]  # faces the road
+                if len(q):
+                    push(q, yaw, {P_HYDRANT: 2, P_BENCH: 3, P_BIN: 4}[p_cls], p_cls)
+            pocc = 0.55 if c == rc.ARTERIAL else 0.22
+            for sgn, salt in ((1.0, 70), (-1.0, 71)):
+                ss, p, t = _along(g, 7.5, 9.0)
+                if not len(ss):
+                    continue
+                k = np.arange(len(ss))
+                keep = _h(wid, k, salt) < pocc
+                n = np.c_[-t[:, 1], t[:, 0]]
+                lat = hw + 0.8 + 1.5 * _h(wid, k, salt + 1)
+                q = (p + n * (sgn * lat)[:, None])[keep]
+                walk = np.where(_h(wid, k, salt + 2) < 0.5, 0.0, np.pi) + (_h(wid, k, salt + 3) - 0.5) * 0.4
+                yaw = (np.arctan2(t[:, 1], t[:, 0]) + walk)[keep]
+                pc = (P_PED0 + np.minimum((_h(wid, k, salt + 4) * N_PED).astype(np.int32), N_PED - 1))[keep]
+                if len(q):
+                    push(q, yaw, 6, pc)
+            if c == rc.ARTERIAL:  # traffic signals: mast arm on the right-hand corner of each approach
+                gc = shapely.get_coordinates(g)
+                for end, sgn in ((0, 1.0), (1, -1.0)):
+                    e = gc[0] if end == 0 else gc[-1]
+                    if ends.get((round(e[0] / 0.5), round(e[1] / 0.5)), 0) < 3 or g.length < 40:
+                        continue
+                    s_ = 8.5 if end == 0 else g.length - 8.5
+                    pp = np.array(shapely.get_coordinates(shapely.line_interpolate_point(g, s_))[0])
+                    p2 = np.array(shapely.get_coordinates(shapely.line_interpolate_point(g, s_ + sgn))[0])
+                    tout = (p2 - pp) / (np.linalg.norm(p2 - pp) + 1e-9)
+                    right = np.array([-tout[1], tout[0]])
+                    q = (pp + right * (hw + 0.9))[None, :]
+                    push(q, np.array([np.arctan2(-right[1], -right[0])]), 5, P_SIGNAL)
         if parking:  # parked cars at both curbs
             for sgn, salt in ((1.0, 1), (-1.0, 2)):
                 s, p, t = _along(g, 6.3, 12.0)
@@ -119,6 +180,27 @@ def build(ctx) -> dict:
         b = ctx.read("buildings")
         if len(b):  # nothing inside buildings
             inside &= ~shapely.contains_xy(shapely.union_all(b.geometry.values), P[:, 0], P[:, 1])
+        kind_all = np.array(kind, np.int32)
+        net, _ = R.ground_network(ctx)  # furniture + pedestrians must stand on a sidewalk polygon
+        sw = net.get(rc.SIDEWALK)
+        onsw = np.ones(len(P), bool)
+        furn = np.isin(kind_all, (2, 3, 4, 6))
+        if sw is not None and furn.any():
+            onsw[furn] = shapely.contains_xy(sw, P[furn, 0], P[furn, 1])
+        elif furn.any():
+            onsw[furn] = False
+        sig = kind_all == 5
+        if sig.any():
+            reach = sw.buffer(2.0) if sw is not None else None
+            onsw[sig] = shapely.contains_xy(reach, P[sig, 0], P[sig, 1]) if reach is not None else True
+        inside &= onsw
+        rp = ctx.dir.parents[1] / "hero_route.json"  # cinematic hero-car route: no instanced cars on it
+        if rp.exists():
+            import json
+            rxy = np.array(json.loads(rp.read_text())["xy"]) + (ctx.ox, ctx.oy)
+            line = shapely.LineString(rxy)
+            near = shapely.dwithin(shapely.points(P), line, 4.2) & (kind_all == 1)
+            inside &= ~near
         P = P[inside]
         kind = np.array(kind, np.int32)[inside]
         cls = np.array(cls, np.int32)[inside]
@@ -134,11 +216,12 @@ def build(ctx) -> dict:
     out = {}
     for lod, sampler in (("lod1", ctx.ground), ("lod0", ctx.ground0)):
         lx, ly = P[:, 0] - ctx.wx, P[:, 1] - ctx.wy
-        z = sampler(lx, ly) + np.where(kind == 1, 0.12, 0.22) if len(P) else np.zeros(0)
+        z = sampler(lx, ly) + np.where(kind == 1, 0.12, 0.26) if len(P) else np.zeros(0)
         sel = np.ones(len(P), bool) if lod == "lod1" else (kind == 0)  # far view: lamps only
         arr = {"verts": np.c_[lx, ly, z].astype(np.float32)[sel], "loops": np.zeros(0, np.int32),
                "sizes": np.zeros(0, np.int32), "p_kind": kind[sel], "p_cls": cls[sel], "p_rot": rot[sel],
                "p_paint": paint[sel], "p_moving": moving[sel]}
         out[lod] = (arr, {"layer": "props", "lod": lod, "lamps": int((kind[sel] == 0).sum()),
-                          "cars": int((kind[sel] == 1).sum())})
+                          "cars": int((kind[sel] == 1).sum()), "peds": int((kind[sel] == 6).sum()),
+                          "signals": int((kind[sel] == 5).sum())})
     return out

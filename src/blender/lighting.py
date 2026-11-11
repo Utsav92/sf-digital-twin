@@ -112,6 +112,7 @@ PRESETS = {
     "midday":      ("2026-06-21T13:00", 0.00, -0.3, 0.0, 1.0, 0.0),
     "blue_hour":   ("2026-09-21T19:25", 0.45, 1.4, 0.0, 1.0, 0.0),
     "night":       ("2026-09-21T22:30", 1.00, 0.2, 0.0, 1.0, 0.06),
+    "sunny":       ("2026-09-21T16:40", 0.00, 0.6, 0.0, 1.0, 0.0),  # bright late afternoon: sun ~22 deg, warm
 }
 
 
@@ -122,10 +123,10 @@ def apply_preset(scn, name="golden_hour", wetness=0.0, when_override=None):
     import materials
     when, night, expo, haze, sky, moon = PRESETS[name]
     air, aer = SKY.get(name, (1.0, 2.0))
-    elev, az = setup_sun_sky(scn, when_override or when, air=air, aerosol=aer)
+    elev, az = setup_sun_sky(scn, when_override or when, strength={"sunny": 1.7}.get(name, 1.0), air=air, aerosol=aer)
     materials.set_globals(night=night, wetness=wetness)
-    use_hdri(scn, name, az, cam_strength={"golden_hour": 0.9, "midday": 0.8, "blue_hour": 0.9,
-                                          "night": 0.6}.get(name, 1.0))
+    use_hdri(scn, {"sunny": "midday"}.get(name, name), az,
+             cam_strength={"golden_hour": 0.9, "midday": 0.8, "blue_hour": 0.9, "night": 0.6, "sunny": 1.0}.get(name, 1.0))
     scn.view_settings.exposure = expo
     nt = scn.world.node_tree
     if haze > 0:  # atmospheric perspective: thin volume scatter in the world
@@ -228,3 +229,60 @@ def use_hdri(scn, preset, sun_az, cam_strength=1.0):
     bgc.inputs["Strength"].default_value = cam_strength
     scn["hdri"] = h["id"]
     return True
+
+
+def atmosphere(scn, center, size=900.0, density=0.0012, aniso=0.45, height=300.0, color=(0.82, 0.88, 0.97)):
+    """Subtle volumetric fog: a local volume box (a world volume at city scale blacks out EEVEE). The sun
+    scatters through it for god rays and depth. Works in EEVEE and Cycles. `center` = (x, y, z) world."""
+    me = bpy.data.meshes.new("atmo_box")
+    ob = bpy.data.objects.new("atmosphere", me)
+    import bmesh
+    bm = bmesh.new()
+    bmesh.ops.create_cube(bm, size=1.0)
+    bm.to_mesh(me)
+    bm.free()
+    scn.collection.objects.link(ob)
+    ob.scale = (size, size, height)
+    ob.location = (center[0], center[1], center[2] + height / 2 - 10)
+    ob.display_type = "WIRE"
+    m = bpy.data.materials.new("atmosphere_vol")
+    m.use_nodes = True
+    nt = m.node_tree
+    for n in list(nt.nodes):
+        nt.nodes.remove(n)
+    pv = nt.nodes.new("ShaderNodeVolumePrincipled")
+    pv.inputs["Color"].default_value = (*color, 1)
+    pv.inputs["Density"].default_value = density
+    pv.inputs["Anisotropy"].default_value = aniso
+    out = nt.nodes.new("ShaderNodeOutputMaterial")
+    nt.links.new(pv.outputs["Volume"], out.inputs["Volume"])
+    ob.data.materials.append(m)
+    for attr, val in (("volumetric_end", size), ("volumetric_tile_size", "2"), ("volumetric_samples", 64),
+                      ("use_volumetric_shadows", True)):
+        try:
+            setattr(scn.eevee, attr, val)
+        except (AttributeError, TypeError):
+            pass
+    return ob
+
+
+def area_lights(scn, cam, target, sun_az_deg, warm=(1.0, 0.78, 0.55), cool=(0.55, 0.7, 1.0), power=1.0):
+    """Cinematic fill: a large soft cool area light opposite the sun (shadow-side lift) and a warm
+    rim/kicker behind the target. Sizes/powers scale with the camera distance."""
+    from mathutils import Vector
+    d = max((Vector(target) - cam.location).length, 50.0)
+    az = math.radians(sun_az_deg)
+    out = []
+    for name, ang, col, watts, size, elev in (("fill", az + math.pi, cool, 0.55, d * 0.8, 0.35),
+                                              ("kicker", az + math.pi * 0.5, warm, 0.35, d * 0.5, 0.25)):
+        ld = bpy.data.lights.new(f"area_{name}", "AREA")
+        ld.shape, ld.size = "DISK", size
+        ld.color = col
+        ld.energy = watts * power * d * d * 4.0  # W; scales with distance^2 so exposure stays similar
+        ob = bpy.data.objects.new(f"area_{name}", ld)
+        scn.collection.objects.link(ob)
+        pos = Vector(target) + Vector((math.sin(ang), math.cos(ang), elev)) * d * 1.1
+        ob.location = pos
+        ob.rotation_euler = (Vector(target) - pos).to_track_quat("-Z", "Y").to_euler()
+        out.append(ob)
+    return out

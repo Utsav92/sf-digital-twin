@@ -37,6 +37,28 @@ def engine(scn, samples=64):
     scn.render.film_transparent = False
 
 
+def cycles(scn, samples=128):
+    """Cycles path-tracing final: Metal GPU, adaptive sampling, OpenImageDenoise, clamped fireflies."""
+    c = scn.cycles
+    for attr, val in (("samples", samples), ("use_adaptive_sampling", True), ("adaptive_threshold", 0.01),
+                      ("adaptive_min_samples", 32), ("use_denoising", True), ("denoiser", "OPENIMAGEDENOISE"),
+                      ("denoising_input_passes", "RGB_ALBEDO_NORMAL"), ("max_bounces", 8),
+                      ("diffuse_bounces", 3), ("glossy_bounces", 4), ("transmission_bounces", 6),
+                      ("volume_bounces", 2), ("transparent_max_bounces", 8), ("sample_clamp_indirect", 8.0),
+                      ("sample_clamp_direct", 0.0), ("use_light_tree", True), ("volume_step_rate", 1.0),
+                      ("volume_max_steps", 256), ("device", "GPU")):
+        try:
+            setattr(c, attr, val)
+        except (AttributeError, TypeError):
+            pass
+    scn.render.film_transparent = False
+    try:
+        scn.view_settings.view_transform = "AgX"
+        scn.view_settings.look = "AgX - Base Contrast"
+    except TypeError:
+        pass
+
+
 def _n(g, t, **inputs):
     n = g.nodes.new(t)
     for k, v in inputs.items():
@@ -47,8 +69,9 @@ def _n(g, t, **inputs):
     return n
 
 
-def compositor(scn, look):
+def compositor(scn, look, fog_scale=1.0):
     fog, fstart, fdepth, fmax, gthr, gstr, lift, gain, grain = LOOKS[look]
+    fmax *= fog_scale
     vl = bpy.context.view_layer
     vl.use_pass_mist = True
     w = scn.world
@@ -110,7 +133,8 @@ def compositor(scn, look):
         except (KeyError, TypeError, ValueError):
             pass
     bl = g.nodes.new("CompositorNodeBlur")
-    for k, v in (("Size", (300, 300)),):
+    k_res = max(0.25, scn.render.resolution_x / 1920.0)  # vignette softness must scale with resolution
+    for k, v in (("Size", (300 * k_res, 300 * k_res)),):
         try:
             bl.inputs[k].default_value = v
         except (KeyError, TypeError, ValueError):
@@ -154,9 +178,12 @@ def compositor(scn, look):
     return g
 
 
-def apply(scn, look="day", dof=None, samples=64):
-    engine(scn, samples)
-    compositor(scn, look)
+def apply(scn, look="day", dof=None, samples=64, fog_scale=1.0):
+    if scn.render.engine == "CYCLES":
+        cycles(scn, samples)
+    else:
+        engine(scn, samples)
+    compositor(scn, look, fog_scale)
     if dof and scn.camera:  # dof = (focus distance m, f-stop)
         d = scn.camera.data.dof
         d.use_dof, d.focus_distance, d.aperture_fstop = True, dof[0], dof[1]

@@ -81,6 +81,66 @@ def car(L, W, H, cabin_h, cabin_l, cabin_off, paint="car_paint_0"):
     return f
 
 
+def _cyl(bm, x, y, z0, z1, r, mat, seg=10):
+    c = bmesh.ops.create_cone(bm, cap_ends=True, segments=seg, radius1=r, radius2=r, depth=z1 - z0)
+    bmesh.ops.translate(bm, verts=c["verts"], vec=(x, y, (z0 + z1) / 2))
+    for f in {f for v in c["verts"] for f in v.link_faces}:
+        f.material_index = M[mat]
+        f.smooth = True
+
+
+def _quad_y(bm, y, x0, x1, z0, z1, mat, facing=1):
+    vs = [bm.verts.new((x0, y, z0)), bm.verts.new((x1, y, z0)), bm.verts.new((x1, y, z1)), bm.verts.new((x0, y, z1))]
+    f = bm.faces.new(vs if facing > 0 else vs[::-1])
+    f.material_index = M[mat]
+
+
+def hydrant(bm):
+    _cyl(bm, 0, 0, 0.0, 0.62, 0.11, "hydrant_red")
+    _cyl(bm, 0, 0, 0.62, 0.70, 0.13, "hydrant_red")
+    _box(bm, 0, 0, 0.45, 0.34, 0.10, 0.10, "hydrant_red")  # side nozzles
+    _box(bm, 0, 0, 0.30, 0.10, 0.22, 0.14, "hydrant_red")  # pumper port
+
+
+def bench(bm):  # seat faces +X? no: back to the road, seat toward +X... slats along Y
+    for i in range(4):
+        _box(bm, 0.0, 0, 0.45, 0.45, 1.6, 0.04, "wood_bench")  # seat (one block, slat look via texture)
+        break
+    _box(bm, -0.22, 0, 0.72, 0.04, 1.6, 0.34, "wood_bench")   # back
+    for sy in (-0.7, 0.7):
+        _box(bm, 0, sy, 0.22, 0.4, 0.05, 0.44, "metal_steel")  # legs
+        _box(bm, -0.2, sy, 0.45, 0.05, 0.05, 0.5, "metal_steel")
+
+
+def trash_bin(bm):
+    _cyl(bm, 0, 0, 0.0, 0.95, 0.27, "bin_green", seg=12)
+    _cyl(bm, 0, 0, 0.95, 1.02, 0.29, "metal_steel", seg=12)
+
+
+def signal(bm):  # mast arm along +X over the road, signal head faces +Y (toward approaching traffic)
+    _box(bm, 0, 0, 3.4, 0.22, 0.22, 6.8, "metal_signal", taper=0.7)
+    _box(bm, 2.6, 0, 6.3, 5.2, 0.12, 0.12, "metal_signal")
+    for hx in (2.2, 4.4):  # two heads
+        _box(bm, hx, 0.0, 5.55, 0.42, 0.34, 1.15, "metal_signal")
+        _quad_y(bm, 0.176, hx - 0.12, hx + 0.12, 5.88, 6.06, "signal_red", 1)
+        _quad_y(bm, 0.176, hx - 0.12, hx + 0.12, 5.12, 5.30, "signal_green", 1)
+    _box(bm, 5.1, 0, 5.9, 0.8, 0.04, 0.3, "metal_signal")  # street-name plate
+
+
+def pedestrian(ci):
+    def f(bm):
+        for sy in (-0.09, 0.09):
+            _box(bm, 0, sy, 0.43, 0.15, 0.15, 0.86, "ped_pants")      # legs
+            _box(bm, 0, sy * 2.3, 1.12, 0.1, 0.1, 0.55, f"ped_cloth_{ci}")  # arms
+        _box(bm, 0, 0, 1.18, 0.24, 0.44, 0.58, f"ped_cloth_{ci}", taper=0.9)  # torso
+        sph = bmesh.ops.create_uvsphere(bm, u_segments=8, v_segments=6, radius=0.11)
+        bmesh.ops.translate(bm, verts=sph["verts"], vec=(0, 0, 1.58))
+        for fc in {fc for v in sph["verts"] for fc in v.link_faces}:
+            fc.material_index = M["ped_skin"]
+            fc.smooth = True
+    return f
+
+
 def protos():
     coll = bpy.data.collections.get("prop_protos")
     if coll:
@@ -96,6 +156,12 @@ def protos():
         for ci in range(len(materials.PAINTS)):
             _proto(f"{k:02d}_{name}_{ci}", car(*dims, paint=f"car_paint_{ci}"), coll)
             k += 1
+    for name, fn in (("hydrant", hydrant), ("bench", bench), ("bin", trash_bin), ("signal", signal)):
+        _proto(f"{k:02d}_{name}", fn, coll)  # 25 hydrant, 26 bench, 27 bin, 28 signal (matches geom/props.py)
+        k += 1
+    for ci in range(len(materials.PED_CLOTH)):  # 29..34 pedestrians
+        _proto(f"{k:02d}_ped_{ci}", pedestrian(ci), coll)
+        k += 1
     return coll
 
 
@@ -156,4 +222,4 @@ def build(tile, scn, rep):
         ob["tile_id"], ob["layer"], ob["lod"] = tile["id"], "props", lod
         k = d["p_kind"]
         rep["objects"][ob.name] = {"instances": int(n), "lamps": int((k == 0).sum()), "cars": int((k == 1).sum()),
-                                   "verts": int(n), "polys": 0, "tris": int((k == 0).sum() * 48 + (k == 1).sum() * 100)}
+                                   "verts": int(n), "polys": 0, "tris": int((k == 0).sum() * 48 + (k == 1).sum() * 100 + (k >= 2).sum() * 80)}

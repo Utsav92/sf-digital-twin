@@ -14,6 +14,7 @@ for n in names:
     m = materials.get_mat(n, local=True)
     m.use_fake_user = True
 materials.globals_group().use_fake_user = True
-out = ROOT / "out/city/sf_materials.blend"
+import os
+out = ROOT / (f"out/city/sf_materials_{os.environ['SF_TEX_RES']}.blend" if os.environ.get("SF_TEX_RES") in ("4k", "8k") else "out/city/sf_materials.blend")
 save_blend_atomic(out)
 print(f"MATLIB {len(names)} materials, {len(bpy.data.images)} images -> {out.relative_to(ROOT)}")

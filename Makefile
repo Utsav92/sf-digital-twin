@@ -3,8 +3,9 @@ all:    ; ./run_all.sh
 pilot:  ; ./run_all.sh --pilot
 tiles:  ; ./run_all.sh --tiles $(TILES)
 stats:  ; .venv/bin/python src/checks/stats.py
+UE ?= $(HOME)/unreal/UE_5.8
 unreal:
-	@UE=$$(ls -d "/Users/Shared/Epic Games"/UE_5.*/Engine/Binaries/Mac/UnrealEditor.app 2>/dev/null | tail -1); \
-	if [ -z "$$UE" ]; then echo "Unreal Engine 5 not installed (expected /Users/Shared/Epic Games/UE_5.x). See README > Unreal."; exit 1; fi; \
-	echo "Unreal phases 12-16 are not implemented yet (found $$UE)"; exit 1
+	@test -x "$(UE)/Engine/Binaries/Mac/UnrealEditor.app/Contents/MacOS/UnrealEditor" || { echo "UE not found at $(UE) (override: make unreal UE=...)"; exit 1; }
+	"$(UE)/Engine/Build/BatchFiles/Mac/Build.sh" SF_DigitalTwinEditor Mac Development -project="$(CURDIR)/SF_DigitalTwin/SF_DigitalTwin.uproject" -waitmutex
+	@echo "Import/map: see SF_DigitalTwin/Documentation/STATUS.md"
 .PHONY: all pilot tiles stats unreal

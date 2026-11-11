@@ -5,6 +5,7 @@ XY metres), so a texture set repeats every `size_m` metres via a Mapping node.
 materials.get_mat() dispatches here first; returns None for names not handled.
 """
 import json
+import os
 
 import bpy
 
@@ -32,6 +33,10 @@ def _img(path, noncolor):
 def texset(nt, role, scale_mul=1.0, uv=None):
     """Image nodes for a texture set -> (color socket, roughness socket, normal socket)."""
     s = man()[role]
+    maps = s["maps"]
+    res = os.environ.get("SF_TEX_RES", "2k")  # 2k (city) | 4k | 8k (hero renders; photoscanned CC0 sets)
+    if res in ("4k", "8k") and s.get("maps" + res):
+        maps = s["maps" + res]
     if uv is None:
         uvn = nt.nodes.new("ShaderNodeUVMap")
         uvn.uv_map = "UVMap"
@@ -41,15 +46,18 @@ def texset(nt, role, scale_mul=1.0, uv=None):
     mp.inputs["Scale"].default_value = (k, k, k)
     nt.links.new(uv, mp.inputs["Vector"])
     out = {}
-    for short, nc in (("diff", False), ("rough", True), ("nor", True)):
+    for short, nc in (("diff", False), ("rough", True), ("nor", True), ("metal", True)):
+        if short not in maps:
+            continue
         t = nt.nodes.new("ShaderNodeTexImage")
-        t.image = _img(s["maps"][short], nc)
+        t.image = _img(maps[short], nc)
         t.interpolation = "Smart" if short == "diff" else "Linear"
         nt.links.new(mp.outputs["Vector"], t.inputs["Vector"])
         out[short] = t.outputs["Color"]
     nm = nt.nodes.new("ShaderNodeNormalMap")
     nm.inputs["Strength"].default_value = 0.8
     nt.links.new(out["nor"], nm.inputs["Color"])
+    texset.last_metal = out.get("metal")  # metalness socket for sets that have one
     return out["diff"], out["rough"], nm.outputs["Normal"]
 
 
@@ -269,7 +277,48 @@ BUILDERS = {
     "terracotta": lambda n: ground(n, "plaster", (0.72, 0.48, 0.33), 0.9),
     "stadium_brick": lambda n: ground(n, "brick", (0.55, 0.30, 0.22), 0.3),
     "glass": glass_tower,
+    "curb": lambda n: ground(n, "concrete", (0.64, 0.63, 0.60), 0.5),
+    "bldg_trim": lambda n: ground(n, "concrete", (0.80, 0.77, 0.72), 0.6),
+    "balcony_slab": lambda n: ground(n, "concrete", (0.60, 0.58, 0.55), 0.5),
+    "sill": lambda n: ground(n, "concrete", (0.82, 0.80, 0.76), 0.6),
+    "railing_metal": lambda n: metal(n, (0.05, 0.06, 0.07), 0.85),
+    "lamp_pole": lambda n: metal(n, (0.30, 0.33, 0.35), 0.6),
+    "metal_steel": lambda n: metal(n),
+    "metal_signal": lambda n: metal(n, (0.10, 0.18, 0.12), 0.8, 1.0, 0.6),
+    "pier": lambda n: wood(n, (0.55, 0.46, 0.36), obj=False),
+    "wood_bench": lambda n: wood(n),
 }
+
+
+def _objuv(nt):
+    tc = nt.nodes.new("ShaderNodeTexCoord")
+    return tc.outputs["Object"]
+
+
+def metal(name, rgb=(0.55, 0.57, 0.60), amount=0.35, scale_mul=1.0, metallic=1.0, obj=True):
+    """Painted/bare steel from the CC0 metal_plate set: tinted, full metalness where the map says so."""
+    m, nt, b = _new(name)
+    c, r, n = texset(nt, "metal", scale_mul, uv=_objuv(nt) if obj else None)
+    nt.links.new(_tint(nt, c, rgb, amount), b.inputs["Base Color"])
+    nt.links.new(r, b.inputs["Roughness"])
+    nt.links.new(n, b.inputs["Normal"])
+    mm = texset.last_metal
+    if mm is not None and metallic > 0:
+        mul = nt.nodes.new("ShaderNodeMath")
+        mul.operation, mul.inputs[1].default_value = "MULTIPLY", metallic
+        nt.links.new(mm, mul.inputs[0])
+        nt.links.new(mul.outputs[0], b.inputs["Metallic"])
+    return m
+
+
+def wood(name, rgb=(0.62, 0.50, 0.38), scale_mul=1.0, obj=True):
+    """Weathered planks (pier decks, benches)."""
+    m, nt, b = _new(name)
+    c, r, n = texset(nt, "wood", scale_mul, uv=_objuv(nt) if obj else None)
+    nt.links.new(_tint(nt, c, rgb, 0.4), b.inputs["Base Color"])
+    nt.links.new(r, b.inputs["Roughness"])
+    nt.links.new(n, b.inputs["Normal"])
+    return m
 
 
 def get(name):
